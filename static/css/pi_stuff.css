@@ -316,26 +316,39 @@ body.screen-off::before {
 }
 
 /* =============================================================================
-   VIDEO CONTROLS (progress bar + time)
+   VIDEO HUD (shared frosted container for controls + title)
    ============================================================================= */
-#video-controls {
+#video-hud {
   position: absolute;
-  bottom: 3.5rem;
-  left: 0;
-  right: 0;
+  bottom: 1.25rem;
+  left: 1.25rem;
+  right: 1.25rem;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border: 0.0625em solid rgba(255, 255, 255, 0.3);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0 1.25rem;
+  flex-direction: column;
+  gap: 0.6rem;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s;
   z-index: 15;
 }
 
-#video-controls.visible {
+#video-hud.visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* =============================================================================
+   VIDEO CONTROLS (progress bar + time)
+   ============================================================================= */
+#video-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 #time-current,
@@ -344,7 +357,6 @@ body.screen-off::before {
   font-weight: bold;
   color: #fff;
   white-space: nowrap;
-  text-shadow: 0 0 0.4em rgba(0, 0, 0, 0.8);
   min-width: 2.75rem;
 }
 
@@ -354,17 +366,18 @@ body.screen-off::before {
 
 #progress-bar {
   flex: 1;
-  height: 0.3rem;
+  height: 1rem;
   background: rgba(255, 255, 255, 0.3);
-  border-radius: 0.15rem;
+  border-radius: 0.25rem;
   cursor: pointer;
   position: relative;
+  box-sizing: content-box;
 }
 
 #progress-fill {
   height: 100%;
   background: #fff;
-  border-radius: 0.15rem;
+  border-radius: 0.25rem;
   width: 0%;
   pointer-events: none;
 }
@@ -373,27 +386,17 @@ body.screen-off::before {
    VIDEO TITLE
    ============================================================================= */
 #video-title {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 2rem 2rem 1.5rem;
-  font-size: 1.25rem;
-  font-weight: bold;
-  color: #fff;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  display: flex;
-  align-items: flex-end;
+  display: none;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #fff;
 }
 
 #video-title.visible {
-  opacity: 1;
-  pointer-events: auto;
+  display: flex;
 }
 
 #video-title-text {
@@ -672,20 +675,31 @@ body.screen-off::before {
 /* =============================================================================
    LOADING SPINNER
    ============================================================================= */
-#player-container.loading::after {
-  content: '';
+#loading-spinner {
   position: absolute;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  width: 2em;
-  height: 2em;
-  border: 0.25em solid rgba(255, 255, 255, 0.2);
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  z-index: 20;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#loading-spinner:not([hidden]) {
+  display: flex;
+}
+
+#loading-spinner::after {
+  content: '';
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 0.3rem solid rgba(255, 255, 255, 0.25);
   border-top-color: #fff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-  z-index: 20;
-  box-shadow: 0 0 0 0.6em rgba(0, 0, 0, 0.5);
-  background: transparent;
 }
 
 @keyframes spin {

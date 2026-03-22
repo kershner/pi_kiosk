@@ -22,6 +22,8 @@ const PiStuff = (() => {
   let streamRefreshTimer = null;
   let currentVideoId = null;
   let controlsTimer = null;
+  let loadAbortController = null;
+  let captionsEnabled = true;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -81,11 +83,13 @@ const PiStuff = (() => {
 
 
   function showSpinner() {
-    $('#player-container')?.classList.add('loading');
+    const el = document.getElementById('loading-spinner');
+    if (el) el.hidden = false;
   }
 
   function hideSpinner() {
-    $('#player-container')?.classList.remove('loading');
+    const el = document.getElementById('loading-spinner');
+    if (el) el.hidden = true;
   }
 
   function hideMessage() {
@@ -96,7 +100,7 @@ const PiStuff = (() => {
   // ─── Video controls (progress bar + time) ────────────────────────────────────
 
   function showControls(persist = false) {
-    const el = $('#video-controls');
+    const el = $('#video-hud');
     if (!el) return;
     clearTimeout(controlsTimer);
     el.classList.add('visible');
@@ -107,7 +111,7 @@ const PiStuff = (() => {
 
   function hideControls() {
     clearTimeout(controlsTimer);
-    $('#video-controls')?.classList.remove('visible');
+    $('#video-hud')?.classList.remove('visible');
   }
 
   function formatTime(seconds) {
@@ -153,8 +157,6 @@ const PiStuff = (() => {
 
   // ─── Subtitles ───────────────────────────────────────────────────────────────
 
-  let captionsEnabled = true;
-
   function appendSubtitleTrack(video, subtitleUrl) {
     const track = document.createElement('track');
     track.id = 'subtitle-track';
@@ -193,6 +195,13 @@ const PiStuff = (() => {
       if (existing) existing.remove();
       if (captionsEnabled && subtitleUrl) appendSubtitleTrack(video, subtitleUrl);
     });
+  }
+
+  function cancelLoad() {
+    if (loadAbortController) {
+      loadAbortController.abort();
+      loadAbortController = null;
+    }
   }
 
   function toggleQr(show) {
@@ -263,9 +272,12 @@ const PiStuff = (() => {
   }
 
   async function playVideo(videoId) {
+    cancelLoad();
+    const controller = new AbortController();
+    loadAbortController = controller;
     showSpinner();
     try {
-      const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`);
+      const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`, { signal: controller.signal });
       const data = await r.json();
       if (data.url) {
         setVideoSource(data.url, videoId, data.title || '', data.subtitle_url || '');
@@ -273,6 +285,7 @@ const PiStuff = (() => {
         showMessage('Could not play video', 'error');
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
       console.error('playVideo error:', e);
       showMessage('Player server not reachable', 'error');
     }
@@ -280,12 +293,15 @@ const PiStuff = (() => {
 
   async function loadNextFromPlaylist(playlistId) {
     if (!playlistId) return;
+    cancelLoad();
+    const controller = new AbortController();
+    loadAbortController = controller;
     showSpinner();
     try {
       const params = new URLSearchParams({ playlist_id: playlistId });
       if (lastVideoId) params.set('exclude', lastVideoId);
 
-      const r = await fetch(`${PLAYER_SERVER}/next?${params}`);
+      const r = await fetch(`${PLAYER_SERVER}/next?${params}`, { signal: controller.signal });
       const data = await r.json();
 
       if (data.url) {
@@ -294,6 +310,7 @@ const PiStuff = (() => {
         skipUnplayable();
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
       console.error('loadNextFromPlaylist error:', e);
       skipUnplayable();
     }
