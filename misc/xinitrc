@@ -9,7 +9,7 @@ xset -dpms
 
 pkill -f "venv/bin/python3 /home/pi/pi_kiosk/player_server.py" 2>/dev/null
 pkill -f "venv/bin/python3 /home/pi/pi_kiosk/app.py" 2>/dev/null
-sleep 1
+sleep 3
 
 mkdir -p /home/pi/logs
 
@@ -21,17 +21,28 @@ YOUTUBE_API_KEY=api_key_here \
   /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
 
 # Wait until Flask is accepting connections before launching the browser
+echo "Waiting for Flask..." >> /home/pi/logs/xinitrc.log
 for i in $(seq 1 30); do
   if curl -sf http://localhost:5020/ping > /dev/null 2>&1; then
+    echo "Flask ready at ${i}s" >> /home/pi/logs/xinitrc.log
     break
   fi
   sleep 1
 done
 
+# ─── Display setup ────────────────────────────────────────────────────────────
+
+# Hide cursor when idle
+unclutter -idle 0 &
+
+# Fix touch offset — X axis scaled to match physical screen width
+xinput set-prop "raspberrypi-ts" "Coordinate Transformation Matrix" 0.5 0 0 0 1 0 0 0 1
+
 # ─── Launch Chromium ──────────────────────────────────────────────────────────
 
+echo "Launching Chromium" >> /home/pi/logs/xinitrc.log
 while true; do
-  chromium-browser \
+  chromium \
     --kiosk \
     --noerrdialogs \
     --disable-session-crashed-bubble \
@@ -54,8 +65,9 @@ while true; do
     --disk-cache-dir=/tmp/chromium-cache \
     --user-data-dir=/home/pi/.config/chromium-kiosk \
     --allow-running-insecure-content \
-    http://localhost:5020?shuffle=true
+    http://localhost:5020?shuffle=true \
+    >> /home/pi/logs/chromium.log 2>&1
 
-  # If Chromium exits or crashes, restart it
+  echo "Chromium exited at $(date)" >> /home/pi/logs/xinitrc.log
   sleep 2
 done
