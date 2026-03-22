@@ -201,6 +201,19 @@ def youtube_search():
         return render_template(template, videos=[], playlists=[], error='Search timed out. Please try again.')
     except Exception as e:
         return render_template(template, videos=[], playlists=[], error=f'Search failed: {str(e)}')
+    
+
+@app.route('/proxy-subtitle')
+def proxy_subtitle():
+    import requests as req
+    url = request.args.get('url')
+    if not url:
+        return '', 400
+    try:
+        r = req.get(url, timeout=10)
+        return r.content, 200, {'Content-Type': 'text/vtt; charset=utf-8'}
+    except Exception:
+        return '', 502
 
 
 @app.route('/ping')

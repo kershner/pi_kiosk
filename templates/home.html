@@ -51,8 +51,18 @@
   </div>
 
   <div id="player-container">
-    <video id="video-player" autoplay playsinline muted></video>
-    <div id="video-title"></div>
+    <video id="video-player" autoplay playsinline muted>
+      <track id="subtitle-track" kind="subtitles" srclang="en" label="English">
+    </video>
+    <div id="video-controls">
+      <span id="time-current">0:00</span>
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <span id="time-remaining">-0:00</span>
+    </div>
+    <div id="video-title">
+      <span id="video-title-text"></span>
+      <button id="cc-toggle" type="button" title="Toggle captions">CC</button>
+    </div>
   </div>
 {% endblock %}
 

@@ -21,6 +21,7 @@ const PiStuff = (() => {
   let messageTimer = null;
   let streamRefreshTimer = null;
   let currentVideoId = null;
+  let controlsTimer = null;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -65,7 +66,7 @@ const PiStuff = (() => {
   }
 
   function setVideoTitle(title) {
-    const el = document.getElementById('video-title');
+    const el = document.getElementById('video-title-text');
     if (!el) return;
     el.textContent = title;
   }
@@ -90,6 +91,108 @@ const PiStuff = (() => {
   function hideMessage() {
     const msgEl = $('#display-message');
     if (msgEl) msgEl.classList.remove('show');
+  }
+
+  // ─── Video controls (progress bar + time) ────────────────────────────────────
+
+  function showControls(persist = false) {
+    const el = $('#video-controls');
+    if (!el) return;
+    clearTimeout(controlsTimer);
+    el.classList.add('visible');
+    if (!persist) {
+      controlsTimer = setTimeout(() => el.classList.remove('visible'), 3000);
+    }
+  }
+
+  function hideControls() {
+    clearTimeout(controlsTimer);
+    $('#video-controls')?.classList.remove('visible');
+  }
+
+  function formatTime(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function updateProgress() {
+    const video = getVideo();
+    if (!video) return;
+    const current = video.currentTime || 0;
+    const duration = video.duration || 0;
+    const pct = duration > 0 ? (current / duration) * 100 : 0;
+    const fill = $('#progress-fill');
+    if (fill) fill.style.width = `${pct}%`;
+    const elCurrent = $('#time-current');
+    const elRemaining = $('#time-remaining');
+    if (elCurrent) elCurrent.textContent = formatTime(current);
+    if (elRemaining) elRemaining.textContent = duration > 0 ? `-${formatTime(duration - current)}` : '-0:00';
+  }
+
+  function initProgressBar() {
+    const bar = $('#progress-bar');
+    if (!bar) return;
+
+    function scrubTo(e) {
+      const video = getVideo();
+      if (!video || !video.duration) return;
+      const rect = bar.getBoundingClientRect();
+      const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+      video.currentTime = Math.max(0, Math.min(1, x / rect.width)) * video.duration;
+    }
+
+    bar.addEventListener('click', scrubTo);
+
+    let dragging = false;
+    bar.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
+    bar.addEventListener('touchmove', e => { if (dragging) scrubTo(e); }, { passive: true });
+    bar.addEventListener('touchend', () => { dragging = false; });
+  }
+
+  // ─── Subtitles ───────────────────────────────────────────────────────────────
+
+  let captionsEnabled = true;
+
+  function appendSubtitleTrack(video, subtitleUrl) {
+    const track = document.createElement('track');
+    track.id = 'subtitle-track';
+    track.kind = 'subtitles';
+    track.srclang = 'en';
+    track.label = 'English';
+    track.src = `/proxy-subtitle?url=${encodeURIComponent(subtitleUrl)}`;
+    track.default = true;
+    track.addEventListener('load', () => {
+      if (video.textTracks[0]) video.textTracks[0].mode = 'showing';
+    });
+    video.appendChild(track);
+  }
+
+  function setSubtitleTrack(subtitleUrl) {
+    const video = getVideo();
+    if (!video) return;
+    const existing = document.getElementById('subtitle-track');
+    if (existing) existing.remove();
+    video.dataset.subtitleUrl = subtitleUrl || '';
+    if (!subtitleUrl || !captionsEnabled) return;
+    appendSubtitleTrack(video, subtitleUrl);
+  }
+
+  function initCCButton() {
+    const btn = document.getElementById('cc-toggle');
+    if (!btn) return;
+    btn.classList.toggle('active', captionsEnabled);
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const video = getVideo();
+      captionsEnabled = !captionsEnabled;
+      btn.classList.toggle('active', captionsEnabled);
+      const subtitleUrl = video?.dataset.subtitleUrl || '';
+      const existing = document.getElementById('subtitle-track');
+      if (existing) existing.remove();
+      if (captionsEnabled && subtitleUrl) appendSubtitleTrack(video, subtitleUrl);
+    });
   }
 
   function toggleQr(show) {
@@ -137,7 +240,7 @@ const PiStuff = (() => {
   // Replaces the YouTube iframe player. Instead of YT.Player, we use a native
   // <video> element fed stream URLs from player_server.py (port 8765).
 
-  function setVideoSource(url, videoId, title = '') {
+  function setVideoSource(url, videoId, title = '', subtitleUrl = '') {
     const video = getVideo();
     if (!video) return;
 
@@ -146,6 +249,7 @@ const PiStuff = (() => {
     currentTitle = title;
     currentVideoId = videoId;
     setVideoTitle(title);
+    setSubtitleTrack(subtitleUrl);
     video.src = url;
     video.load();
     video.play().catch(err => console.error('play() failed:', err));
@@ -164,7 +268,7 @@ const PiStuff = (() => {
       const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`);
       const data = await r.json();
       if (data.url) {
-        setVideoSource(data.url, videoId, data.title || '');
+        setVideoSource(data.url, videoId, data.title || '', data.subtitle_url || '');
       } else {
         showMessage('Could not play video', 'error');
       }
@@ -185,7 +289,7 @@ const PiStuff = (() => {
       const data = await r.json();
 
       if (data.url) {
-        setVideoSource(data.url, data.video_id, data.title || '');
+        setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
       } else {
         skipUnplayable();
       }
@@ -417,10 +521,15 @@ const PiStuff = (() => {
       consecutiveSkips = 0;
       hideSpinner();
       hideVideoTitle();
+      hideControls();
     });
 
-    // Title is shown/hidden on pause/play
-    video.addEventListener('pause', () => showVideoTitle());
+    video.addEventListener('pause', () => {
+      showVideoTitle();
+      showControls(true);  // persist while paused
+    });
+
+    video.addEventListener('timeupdate', updateProgress);
 
     // Refresh stream URL before it expires for long videos (URLs last ~6h).
     // Reschedules itself after each swap so any length video is covered.
@@ -523,6 +632,7 @@ const PiStuff = (() => {
                 video.pause();
                 showMessage('Paused', 'info', 1500);
               }
+              showControls(!video.paused);  // persist if now paused, fade if playing
             }
           }, doubleClickDelay);
         }
@@ -577,6 +687,8 @@ const PiStuff = (() => {
     initMenu();
     customVideoControls();
     initVideoPlayer();
+    initProgressBar();
+    initCCButton();
     startLatestPoller();
   }
 

@@ -316,6 +316,60 @@ body.screen-off::before {
 }
 
 /* =============================================================================
+   VIDEO CONTROLS (progress bar + time)
+   ============================================================================= */
+#video-controls {
+  position: absolute;
+  bottom: 3.5rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1.25rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+  z-index: 15;
+}
+
+#video-controls.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#time-current,
+#time-remaining {
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #fff;
+  white-space: nowrap;
+  text-shadow: 0 0 0.4em rgba(0, 0, 0, 0.8);
+  min-width: 2.75rem;
+}
+
+#time-remaining {
+  text-align: right;
+}
+
+#progress-bar {
+  flex: 1;
+  height: 0.3rem;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 0.15rem;
+  cursor: pointer;
+  position: relative;
+}
+
+#progress-fill {
+  height: 100%;
+  background: #fff;
+  border-radius: 0.15rem;
+  width: 0%;
+  pointer-events: none;
+}
+
+/* =============================================================================
    VIDEO TITLE
    ============================================================================= */
 #video-title {
@@ -331,10 +385,40 @@ body.screen-off::before {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
 #video-title.visible {
   opacity: 1;
+  pointer-events: auto;
+}
+
+#video-title-text {
+  flex: 1;
+}
+
+#cc-toggle {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.15);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
+  border-radius: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+#cc-toggle.active {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #fff;
+  color: #000;
 }
 .submit-page {
   overflow-y: auto;
