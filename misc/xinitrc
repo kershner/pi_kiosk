@@ -1,0 +1,61 @@
+#!/bin/sh
+
+# Disable screen blanking and power management
+xset s off
+xset s noblank
+xset -dpms
+
+# ─── Start backend servers ────────────────────────────────────────────────────
+
+pkill -f "python3 /home/pi/pi-kiosk/player_server.py" 2>/dev/null
+pkill -f "python3 /home/pi/pi-kiosk/app.py" 2>/dev/null
+sleep 1
+
+mkdir -p /home/pi/logs
+
+# yt-dlp stream resolver (port 8765)
+python3 /home/pi/pi-kiosk/player_server.py >> /home/pi/logs/player_server.log 2>&1 &
+
+# Flask server (port 5020)
+YOUTUBE_API_KEY=api_key_here \
+  python3 /home/pi/pi-kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
+
+# Wait until Flask is accepting connections before launching the browser
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:5020/ping > /dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+# ─── Launch Chromium ──────────────────────────────────────────────────────────
+
+while true; do
+  chromium-browser \
+    --kiosk \
+    --noerrdialogs \
+    --disable-session-crashed-bubble \
+    --disable-infobars \
+    --autoplay-policy=no-user-gesture-required \
+    --disable-gpu \
+    --disable-gpu-compositing \
+    --disable-zero-copy \
+    --use-gl=swiftshader \
+    --disable-features=TranslateUI,BackForwardCache \
+    --disable-background-networking \
+    --disable-sync \
+    --disable-default-apps \
+    --disable-extensions \
+    --disable-component-update \
+    --disable-domain-reliability \
+    --disable-breakpad \
+    --metrics-recording-only \
+    --mute-audio \
+    --disk-cache-dir=/tmp/chromium-cache \
+    --user-data-dir=/home/pi/.config/chromium-kiosk \
+    --allow-running-insecure-content \
+    http://localhost:5020?shuffle=true
+
+  # If Chromium exits or crashes, restart it
+  sleep 2
+done

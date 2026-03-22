@@ -1,0 +1,5 @@
+flask
+requests
+qrcode[pil]
+pillow
+yt-dlp

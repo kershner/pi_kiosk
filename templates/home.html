@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <button class="menu-button" type="button" aria-label="Open menu"></button>
+
+  <div class="menu" id="menu" hidden>
+    <div class="menu-inner">
+      <div class="menu-header">
+        <div class="menu-actions">
+          <button data-action="reload" type="button">reload</button>
+          <button data-action="qr" type="button">show qr</button>
+          <button data-action="screen" type="button">screen</button>
+        </div>
+
+        <div class="menu-categories">
+          <div class="category-btns">
+            {% for category in categories %}
+            <button data-category="{{ category.name|lower }}" type="button">
+              {{ category.name }}
+            </button>
+            {% endfor %}
+          </div>
+
+          <div class="random-btn">
+            <button data-action="random" title="random" type="button">⟲</button>
+            <button data-action="shuffle" title="shuffle" type="button">⤨</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="menu-content">
+        <div class="menu-playlists" id="playlists"></div>
+
+        <div class="menu-qr" id="qr-container" hidden>
+          <div class="qr-box">
+            <button class="qr-img" data-action="regenerate-qr" type="button">
+              {% if qr_code_b64 %}
+                <img src="data:image/png;base64,{{ qr_code_b64 }}" alt="Regenerate QR Code">
+              {% endif %}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="menu-footer">
+        <div class="menu-actions">
+          <button data-action="close" type="button">close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="player-container">
+    <video id="video-player" autoplay playsinline muted></video>
+    <div id="video-title"></div>
+  </div>
+{% endblock %}
+
+{% block window_vars %}
+  window.CATEGORIES_DATA = {{ categories_json|safe }};
+  window.API_PLAY_URL = "{{ api_play_url }}";
+  window.LATEST_URL = "{{ latest_url }}";
+  window.REGENERATE_QR_URL = "{{ regenerate_qr_url }}";
+{% endblock %}
+
+{% block page_script %}
+  <script type="module" src="/static/js/piStuff.js"></script>
+{% endblock %}
