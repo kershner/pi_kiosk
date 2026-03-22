@@ -19,6 +19,8 @@ const PiStuff = (() => {
   let videoHistory = [];
   let currentTitle = '';
   let messageTimer = null;
+  let streamRefreshTimer = null;
+  let currentVideoId = null;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -140,7 +142,9 @@ const PiStuff = (() => {
     if (!video) return;
 
     clearTimeout(skipTimer);
+    clearTimeout(streamRefreshTimer);
     currentTitle = title;
+    currentVideoId = videoId;
     setVideoTitle(title);
     video.src = url;
     video.load();
@@ -417,6 +421,39 @@ const PiStuff = (() => {
 
     // Title is shown/hidden on pause/play
     video.addEventListener('pause', () => showVideoTitle());
+
+    // Refresh stream URL before it expires for long videos (URLs last ~6h).
+    // Reschedules itself after each swap so any length video is covered.
+    video.addEventListener('loadedmetadata', () => {
+      clearTimeout(streamRefreshTimer);
+
+      const duration = video.duration;
+      const REFRESH_INTERVAL = 5 * 60 * 60; // re-resolve every 5h
+      if (!isFinite(duration) || duration < REFRESH_INTERVAL) return;
+
+      async function scheduleRefresh() {
+        const refreshIn = Math.max(0, REFRESH_INTERVAL - (video.currentTime % REFRESH_INTERVAL)) * 1000;
+        streamRefreshTimer = setTimeout(async () => {
+          if (!currentVideoId) return;
+          const savedTime = video.currentTime;
+          try {
+            const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(currentVideoId)}`);
+            const data = await r.json();
+            if (data.url) {
+              video.src = data.url;
+              video.load();
+              video.currentTime = savedTime;
+              video.play().catch(err => console.error('stream refresh play() failed:', err));
+              scheduleRefresh(); // reschedule for the next 5h window
+            }
+          } catch (e) {
+            console.error('Stream URL refresh failed:', e);
+          }
+        }, refreshIn);
+      }
+
+      scheduleRefresh();
+    });
   }
 
   function customVideoControls() {
