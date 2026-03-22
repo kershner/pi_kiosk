@@ -7,18 +7,18 @@ xset -dpms
 
 # ─── Start backend servers ────────────────────────────────────────────────────
 
-pkill -f "python3 /home/pi/pi-kiosk/player_server.py" 2>/dev/null
-pkill -f "python3 /home/pi/pi-kiosk/app.py" 2>/dev/null
+pkill -f "venv/bin/python3 /home/pi/pi_kiosk/player_server.py" 2>/dev/null
+pkill -f "venv/bin/python3 /home/pi/pi_kiosk/app.py" 2>/dev/null
 sleep 1
 
 mkdir -p /home/pi/logs
 
 # yt-dlp stream resolver (port 8765)
-python3 /home/pi/pi-kiosk/player_server.py >> /home/pi/logs/player_server.log 2>&1 &
+/home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/player_server.py >> /home/pi/logs/player_server.log 2>&1 &
 
 # Flask server (port 5020)
 YOUTUBE_API_KEY=api_key_here \
-  python3 /home/pi/pi-kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
+  /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
 
 # Wait until Flask is accepting connections before launching the browser
 for i in $(seq 1 30); do
