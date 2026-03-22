@@ -48,10 +48,8 @@ Tap left/right thirds of the screen to control playback. Tap the top-left corner
 
 ## kershner.org dependency
 
-Playlists are managed via the Django admin on `kershner.org` and served at:
+Playlists are managed via the Django admin on [kershner.org](https://kershner.org) and served at:
 
 ```
 GET https://kershner.org/pi/categories.json
 ```
-
-Everything else — QR codes, tokens, search, playback — runs locally on the Pi.
