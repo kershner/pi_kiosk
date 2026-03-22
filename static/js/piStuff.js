@@ -77,6 +77,14 @@ const PiStuff = (() => {
   }
 
 
+  function showSpinner() {
+    $('#player-container')?.classList.add('loading');
+  }
+
+  function hideSpinner() {
+    $('#player-container')?.classList.remove('loading');
+  }
+
   function hideMessage() {
     const msgEl = $('#display-message');
     if (msgEl) msgEl.classList.remove('show');
@@ -147,6 +155,7 @@ const PiStuff = (() => {
   }
 
   async function playVideo(videoId) {
+    showSpinner();
     try {
       const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`);
       const data = await r.json();
@@ -163,6 +172,7 @@ const PiStuff = (() => {
 
   async function loadNextFromPlaylist(playlistId) {
     if (!playlistId) return;
+    showSpinner();
     try {
       const params = new URLSearchParams({ playlist_id: playlistId });
       if (lastVideoId) params.set('exclude', lastVideoId);
@@ -381,6 +391,7 @@ const PiStuff = (() => {
     // Mirrors onError: skipUnplayable
     video.addEventListener('error', () => {
       if (switchingPlaylist) return;
+      hideSpinner();
       console.warn('Video error, skipping...');
       skipUnplayable();
     });
@@ -400,6 +411,7 @@ const PiStuff = (() => {
     video.addEventListener('playing', () => {
       clearTimeout(skipTimer);
       consecutiveSkips = 0;
+      hideSpinner();
       hideVideoTitle();
     });
 

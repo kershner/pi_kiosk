@@ -584,3 +584,26 @@ body.screen-off::before {
   margin-right: 0.25em;
   font-weight: normal;
 }
+
+/* =============================================================================
+   LOADING SPINNER
+   ============================================================================= */
+#player-container.loading::after {
+  content: '';
+  position: absolute;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 2em;
+  height: 2em;
+  border: 0.25em solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  z-index: 20;
+  box-shadow: 0 0 0 0.6em rgba(0, 0, 0, 0.5);
+  background: transparent;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
