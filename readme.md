@@ -14,6 +14,45 @@ Instead of the YouTube embed, two local servers handle everything:
 
 **`player_server.py`** (port 8765) uses yt-dlp to resolve YouTube IDs into direct MP4 stream URLs, which the native `<video>` element plays directly. Playlist video lists are cached for an hour, and the next video is pre-fetched in the background so transitions are seamless. For videos longer than 5 hours, the stream URL is automatically refreshed before YouTube's ~6 hour expiry.
 
+YouTube now requires Proof-of-Origin (PO) tokens for most direct media requests. The kiosk runs the maintained `bgutil-ytdlp-pot-provider` locally on port 4416 and uses its video-specific tokens when yt-dlp resolves each stream. Resolved URLs are probed before they reach Chromium so rejected URLs can be retried automatically.
+
+## Raspberry Pi YouTube setup
+
+The Pi 2B uses 32-bit ARMv7, so this project uses the official Node.js 22 ARMv7 build instead of Deno. From the Pi, update the checkout and run the installer once:
+
+```sh
+cd /home/pi/pi_kiosk
+chmod +x misc/install_youtube_support.sh
+./misc/install_youtube_support.sh
+```
+
+The installer:
+
+- installs Node.js 22 for ARMv7;
+- updates yt-dlp and installs its EJS and PO-token plugin dependencies;
+- clones and builds the token provider in `/home/pi/bgutil-ytdlp-pot-provider`.
+
+The first installation can take several minutes on a Pi 2B because the provider's small native canvas dependency may need to compile locally.
+
+Install the updated X startup script if `/home/pi/.xinitrc` is not already linked to the repository copy, then reboot:
+
+```sh
+cp /home/pi/pi_kiosk/misc/xinitrc /home/pi/.xinitrc
+sudo reboot
+```
+
+After reboot, verify all three local services and inspect their logs:
+
+```sh
+curl -s http://127.0.0.1:5020/ping
+curl -s http://127.0.0.1:8765/ping
+curl -s -o /dev/null -w 'PO provider HTTP %{http_code}\n' http://127.0.0.1:4416/
+tail -n 100 /home/pi/logs/pot_provider.log
+tail -n 100 /home/pi/logs/player_server.log
+```
+
+Successful stream resolution now logs `Validated VIDEO_ID format FORMAT_ID`. A rejected CDN URL logs its HTTP status and is not sent to Chromium.
+
 ## Touch controls
 
 Tap left/right thirds of the screen to control playback. Tap the top-left corner to open the menu.

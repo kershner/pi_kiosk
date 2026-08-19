@@ -9,9 +9,27 @@ xset -dpms
 
 pkill -f "venv/bin/python3 /home/pi/pi_kiosk/player_server.py" 2>/dev/null
 pkill -f "venv/bin/python3 /home/pi/pi_kiosk/app.py" 2>/dev/null
+pkill -f "/home/pi/bgutil-ytdlp-pot-provider/server/build/main.js" 2>/dev/null
 sleep 3
 
 mkdir -p /home/pi/logs
+
+# YouTube PO token provider (port 4416)
+/usr/local/bin/node /home/pi/bgutil-ytdlp-pot-provider/server/build/main.js >> /home/pi/logs/pot_provider.log 2>&1 &
+
+echo "Waiting for PO token provider..." >> /home/pi/logs/xinitrc.log
+pot_provider_ready=0
+for i in $(seq 1 30); do
+  if curl -s -o /dev/null http://127.0.0.1:4416/; then
+    echo "PO token provider ready at ${i}s" >> /home/pi/logs/xinitrc.log
+    pot_provider_ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$pot_provider_ready" -ne 1 ]; then
+  echo "PO token provider failed to start; see pot_provider.log" >> /home/pi/logs/xinitrc.log
+fi
 
 # yt-dlp stream resolver (port 8765)
 /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/player_server.py >> /home/pi/logs/player_server.log 2>&1 &

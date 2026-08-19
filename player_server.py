@@ -7,14 +7,21 @@ so Chromium can play them natively without the heavy YouTube iframe.
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 import subprocess
 import threading
 import random
 import json
 import time
 import sys
+import socket
 
 PORT = 8765
+POT_PROVIDER_HOST = "127.0.0.1"
+POT_PROVIDER_PORT = 4416
+STREAM_PROBE_BYTES = 1024
+MAX_RESOLVE_ATTEMPTS = 5
 
 # Playlist video ID cache: playlist_id → {ids: [...], ts: float}
 _playlist_cache = {}
@@ -34,11 +41,40 @@ def log(msg):
 def run_ytdlp(*args, timeout=45):
     """Run yt-dlp with given args, return stdout or raise on failure.
     Uses sys.executable so yt-dlp is resolved from the active venv."""
-    cmd = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--no-playlist-reverse", *args]
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--no-progress",
+        "--no-playlist-reverse",
+        "--js-runtimes", "node",
+        "--extractor-args", "youtube:player_client=mweb",
+        *args,
+    ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "yt-dlp failed")
+    if result.stderr.strip():
+        for line in result.stderr.strip().splitlines():
+            log(f"yt-dlp: {line}")
     return result.stdout.strip()
+
+
+def validate_stream_url(url, http_headers=None):
+    """Fetch a tiny byte range so rejected Google Video URLs never reach Chromium."""
+    headers = dict(http_headers or {})
+    headers["Range"] = f"bytes=0-{STREAM_PROBE_BYTES - 1}"
+    request = Request(url, headers=headers)
+
+    try:
+        with urlopen(request, timeout=15) as response:
+            status = getattr(response, "status", 200)
+            if status not in (200, 206):
+                raise RuntimeError(f"media probe returned HTTP {status}")
+            if not response.read(1):
+                raise RuntimeError("media probe returned no data")
+    except HTTPError as e:
+        raise RuntimeError(f"media probe returned HTTP {e.code}") from e
+    except (URLError, TimeoutError) as e:
+        raise RuntimeError(f"media probe failed: {e}") from e
 
 
 def get_playlist_video_ids(playlist_id):
@@ -79,6 +115,11 @@ def resolve_stream_url(video_id):
     # 'url' is the stream URL of the selected format; fall back to first
     # requested format if yt-dlp split into separate video+audio tracks.
     url = info.get("url") or (info.get("requested_formats") or [{}])[0].get("url", "")
+    if not url:
+        raise RuntimeError("yt-dlp returned no stream URL")
+
+    validate_stream_url(url, info.get("http_headers"))
+    log(f"Validated {video_id} format {info.get('format_id', 'unknown')}")
 
     # Find English VTT subtitle URL — prefer manual captions, fall back to auto-generated
     subtitle_url = ""
@@ -94,7 +135,7 @@ def resolve_stream_url(video_id):
 
 
 def pick_and_resolve(playlist_id, exclude_id=None):
-    """Pick a random video from playlist and resolve its stream URL."""
+    """Pick and validate a random playlist video, retrying rejected streams."""
     ids = get_playlist_video_ids(playlist_id)
     if not ids:
         raise RuntimeError("Empty playlist")
@@ -103,9 +144,19 @@ def pick_and_resolve(playlist_id, exclude_id=None):
     if not available:
         available = ids
 
-    video_id = random.choice(available)
-    url, title, subtitle_url = resolve_stream_url(video_id)
-    return {"url": url, "video_id": video_id, "title": title, "subtitle_url": subtitle_url}
+    candidates = random.sample(available, min(MAX_RESOLVE_ATTEMPTS, len(available)))
+    last_error = None
+    for video_id in candidates:
+        try:
+            url, title, subtitle_url = resolve_stream_url(video_id)
+            return {"url": url, "video_id": video_id, "title": title, "subtitle_url": subtitle_url}
+        except Exception as e:
+            last_error = e
+            log(f"Rejected {video_id}: {e}")
+
+    raise RuntimeError(
+        f"No playable stream after {len(candidates)} attempts: {last_error}"
+    )
 
 
 def prefetch_next(playlist_id, exclude_id=None):
@@ -255,6 +306,29 @@ def check_dependencies():
         subprocess.run([sys.executable, "-m", "yt_dlp", "--version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("ERROR: yt-dlp not found. Install with: pip install yt-dlp", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        node = subprocess.run(
+            ["node", "--version"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        major = int(node.lstrip("v").split(".", 1)[0])
+        if major < 22:
+            raise RuntimeError(f"Node.js 22+ is required; found {node}")
+        log(f"Using Node {node}")
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError, RuntimeError) as e:
+        print(f"ERROR: Node.js 22+ is required for YouTube challenge solving: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with socket.create_connection((POT_PROVIDER_HOST, POT_PROVIDER_PORT), timeout=3):
+            log(f"PO token provider ready on {POT_PROVIDER_HOST}:{POT_PROVIDER_PORT}")
+    except OSError as e:
+        print(
+            f"ERROR: PO token provider is not reachable on "
+            f"{POT_PROVIDER_HOST}:{POT_PROVIDER_PORT}: {e}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

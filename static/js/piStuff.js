@@ -268,7 +268,6 @@ const PiStuff = (() => {
       if (videoHistory.length > 20) videoHistory.shift();
       lastVideoId = videoId;
     }
-    consecutiveSkips = 0;
   }
 
   async function playVideo(videoId) {
@@ -517,7 +516,13 @@ const PiStuff = (() => {
     video.addEventListener('error', () => {
       if (switchingPlaylist) return;
       hideSpinner();
-      console.warn('Video error, skipping...');
+      console.warn('Video error, skipping...', {
+        code: video.error?.code,
+        message: video.error?.message,
+        networkState: video.networkState,
+        readyState: video.readyState,
+        videoId: currentVideoId,
+      });
       skipUnplayable();
     });
 
