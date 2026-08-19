@@ -52,6 +52,10 @@
 
   <div id="player-container">
     <div id="loading-spinner" hidden></div>
+    <div id="now-playing" role="status" aria-live="polite">
+      <span id="now-playing-status">Now playing</span>
+      <div id="now-playing-title"></div>
+    </div>
     <video id="video-player" autoplay playsinline muted>
       <track id="subtitle-track" kind="subtitles" srclang="en" label="English">
     </video>

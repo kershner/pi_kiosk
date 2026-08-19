@@ -316,6 +316,50 @@ body.screen-off::before {
 }
 
 /* =============================================================================
+   NOW PLAYING (large title shown across loading, playback start, and pause)
+   ============================================================================= */
+#now-playing {
+  position: absolute;
+  left: 1.5rem;
+  right: 1.5rem;
+  bottom: 5.75rem;
+  z-index: 14;
+  padding: 1rem 1.25rem 1.15rem;
+  border-left: 0.3rem solid rgba(255, 255, 255, 0.9);
+  border-radius: 0.25rem 0.8rem 0.8rem 0.25rem;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.58) 72%, transparent);
+  color: #fff;
+  opacity: 0;
+  transform: translateY(0.75rem);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  pointer-events: none;
+}
+
+#now-playing.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#now-playing-status {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.75rem;
+  font-weight: bold;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+#now-playing-title {
+  max-width: 90%;
+  font-size: clamp(1.6rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1.08;
+  text-wrap: balance;
+  text-shadow: 0 0.1rem 0.35rem rgba(0, 0, 0, 0.75);
+}
+
+/* =============================================================================
    VIDEO HUD (shared frosted container for controls + title)
    ============================================================================= */
 #video-hud {

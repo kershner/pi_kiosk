@@ -25,6 +25,8 @@ const PiStuff = (() => {
   let loadAbortController = null;
   let captionsEnabled = true;
   let queuedShufflePlaylist = null;
+  let nowPlayingTimer = null;
+  let videoLoading = false;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -71,9 +73,28 @@ const PiStuff = (() => {
   }
 
   function setVideoTitle(title) {
-    const el = document.getElementById('video-title-text');
-    if (!el) return;
-    el.textContent = title;
+    const hudTitle = document.getElementById('video-title-text');
+    const largeTitle = document.getElementById('now-playing-title');
+    if (hudTitle) hudTitle.textContent = title;
+    if (largeTitle) largeTitle.textContent = title;
+  }
+
+  function showNowPlaying(status = 'Now playing') {
+    clearTimeout(nowPlayingTimer);
+    const overlay = document.getElementById('now-playing');
+    const statusEl = document.getElementById('now-playing-status');
+    if (statusEl) statusEl.textContent = status;
+    overlay?.classList.add('visible');
+  }
+
+  function hideNowPlayingAfterDelay() {
+    clearTimeout(nowPlayingTimer);
+    nowPlayingTimer = setTimeout(() => {
+      const video = getVideo();
+      if (!video || !video.paused) {
+        document.getElementById('now-playing')?.classList.remove('visible');
+      }
+    }, 5000);
   }
 
   function showVideoTitle() {
@@ -88,6 +109,8 @@ const PiStuff = (() => {
   function showSpinner() {
     const el = document.getElementById('loading-spinner');
     if (el) el.hidden = false;
+    videoLoading = true;
+    showNowPlaying(currentTitle ? 'Loading next video…' : 'Loading video…');
   }
 
   function hideSpinner() {
@@ -261,6 +284,7 @@ const PiStuff = (() => {
     currentTitle = title;
     currentVideoId = videoId;
     setVideoTitle(title);
+    showNowPlaying('Starting video…');
     setSubtitleTrack(subtitleUrl);
     video.src = url;
     video.load();
@@ -389,6 +413,7 @@ const PiStuff = (() => {
   }
 
   async function startInitialPlayback() {
+    showSpinner();
     if (shuffleState) {
       try {
         const response = await fetch(`${PLAYER_SERVER}/ready`);
@@ -577,6 +602,7 @@ const PiStuff = (() => {
     // Mirrors YT.PlayerState.ENDED handling
     video.addEventListener('ended', () => {
       if (switchingPlaylist) return;
+      showNowPlaying('Loading next video…');
       if (shuffleState) return playQueuedShuffle();
       loadNextFromPlaylist(currentPlaylist);
     });
@@ -610,12 +636,17 @@ const PiStuff = (() => {
     video.addEventListener('playing', () => {
       clearTimeout(skipTimer);
       consecutiveSkips = 0;
+      videoLoading = false;
       hideSpinner();
       hideVideoTitle();
       hideControls();
+      showNowPlaying('Now playing');
+      hideNowPlayingAfterDelay();
     });
 
     video.addEventListener('pause', () => {
+      if (videoLoading) return;
+      showNowPlaying('Paused');
       showVideoTitle();
       showControls(true);  // persist while paused
     });
