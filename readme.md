@@ -51,7 +51,7 @@ tail -n 100 /home/pi/logs/pot_provider.log
 tail -n 100 /home/pi/logs/player_server.log
 ```
 
-Successful stream resolution now logs `Validated VIDEO_ID format FORMAT_ID`. A rejected CDN URL logs its HTTP status and is not sent to Chromium.
+Successful stream resolution now logs `Validated VIDEO_ID format FORMAT_ID`, followed by the selected subtitle language when captions are available. A rejected CDN URL logs its HTTP status and is not sent to Chromium. Subtitle requests are proxied with the same mweb identity used during resolution so YouTube accepts the tokenized caption URL.
 
 ## Touch controls
 

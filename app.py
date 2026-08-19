@@ -18,6 +18,19 @@ import time
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='[pi_server] %(message)s')
 
+MWEB_USER_AGENT = (
+    'Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) '
+    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 '
+    'Mobile/15E148 Safari/604.1'
+)
+SUBTITLE_REQUEST_HEADERS = {
+    'User-Agent': MWEB_USER_AGENT,
+    'Referer': 'https://m.youtube.com/',
+    'Accept': 'text/vtt,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'identity',
+}
+
 
 def get_base_url():
     """Build the Pi's local base URL for QR code generation."""
@@ -205,14 +218,20 @@ def youtube_search():
 
 @app.route('/proxy-subtitle')
 def proxy_subtitle():
-    import requests as req
     url = request.args.get('url')
     if not url:
         return '', 400
     try:
-        r = req.get(url, timeout=10)
-        return r.content, 200, {'Content-Type': 'text/vtt; charset=utf-8'}
-    except Exception:
+        r = http.get(url, headers=SUBTITLE_REQUEST_HEADERS, timeout=10)
+        r.raise_for_status()
+        if not r.content.lstrip(b'\xef\xbb\xbf').startswith(b'WEBVTT'):
+            raise ValueError('YouTube returned a non-VTT subtitle response')
+        return r.content, 200, {
+            'Content-Type': 'text/vtt; charset=utf-8',
+            'Cache-Control': 'private, max-age=300',
+        }
+    except Exception as e:
+        app.logger.warning('Subtitle proxy failed: %s', e)
         return '', 502
 
 

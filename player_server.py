@@ -22,6 +22,18 @@ POT_PROVIDER_HOST = "127.0.0.1"
 POT_PROVIDER_PORT = 4416
 STREAM_PROBE_BYTES = 1024
 MAX_RESOLVE_ATTEMPTS = 5
+MWEB_USER_AGENT = (
+    "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+    "Mobile/15E148 Safari/604.1"
+)
+SUBTITLE_REQUEST_HEADERS = {
+    "User-Agent": MWEB_USER_AGENT,
+    "Referer": "https://m.youtube.com/",
+    "Accept": "text/vtt,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "identity",
+}
 
 # Playlist video ID cache: playlist_id → {ids: [...], ts: float}
 _playlist_cache = {}
@@ -77,6 +89,25 @@ def validate_stream_url(url, http_headers=None):
         raise RuntimeError(f"media probe failed: {e}") from e
 
 
+def find_english_subtitle(info):
+    """Return the best English VTT URL from yt-dlp's language variants."""
+    for source_name in ("subtitles", "automatic_captions"):
+        source = info.get(source_name) or {}
+        language_codes = sorted(
+            (code for code in source if code.lower() == "en" or code.lower().startswith("en-")),
+            key=lambda code: (
+                code.lower() != "en",
+                code.lower() != "en-orig",
+                code.lower(),
+            ),
+        )
+        for language_code in language_codes:
+            for entry in source.get(language_code) or []:
+                if entry.get("ext") == "vtt" and entry.get("url"):
+                    return entry["url"], source_name, language_code
+    return "", "", ""
+
+
 def get_playlist_video_ids(playlist_id):
     """Return list of video IDs for a playlist, cached for 1 hour."""
     with _playlist_lock:
@@ -121,15 +152,12 @@ def resolve_stream_url(video_id):
     validate_stream_url(url, info.get("http_headers"))
     log(f"Validated {video_id} format {info.get('format_id', 'unknown')}")
 
-    # Find English VTT subtitle URL — prefer manual captions, fall back to auto-generated
-    subtitle_url = ""
-    for source in (info.get("subtitles", {}), info.get("automatic_captions", {})):
-        for entry in source.get("en", []):
-            if entry.get("ext") == "vtt":
-                subtitle_url = entry.get("url", "")
-                break
-        if subtitle_url:
-            break
+    # Prefer manual captions and accept yt-dlp's en-orig/en-US variants too.
+    subtitle_url, subtitle_source, subtitle_language = find_english_subtitle(info)
+    if subtitle_url:
+        log(f"Selected {subtitle_source} language {subtitle_language} for {video_id}")
+    else:
+        log(f"No English subtitles found for {video_id}")
 
     return url, title, subtitle_url
 
@@ -274,8 +302,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             try:
-                with urllib.request.urlopen(sub_url, timeout=10) as r:
+                request = urllib.request.Request(sub_url, headers=SUBTITLE_REQUEST_HEADERS)
+                with urllib.request.urlopen(request, timeout=10) as r:
                     data = r.read()
+                if not data.lstrip(b"\xef\xbb\xbf").startswith(b"WEBVTT"):
+                    raise RuntimeError("YouTube returned a non-VTT subtitle response")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/vtt; charset=utf-8")
                 self.send_header("Access-Control-Allow-Origin", "*")
