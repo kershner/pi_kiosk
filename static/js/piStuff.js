@@ -54,6 +54,8 @@ const PiStuff = (() => {
       loadPlaylist(playlist, name);
     } else if (video) {
       setTimeout(() => playVideo(video), 500);
+    } else {
+      startInitialPlayback();
     }
 
     if (shuffleState) $('#menu [data-action="shuffle"]')?.classList.add('selected');
@@ -376,10 +378,41 @@ const PiStuff = (() => {
       }));
     });
 
-    if (!currentPlaylist) {
-      const playlistName = playRandom();
-      if (playlistName) setTimeout(() => showMessage(`Playing ${playlistName}`, 'info', 3000), 500);
+  }
+
+  function findPlaylistChoice(playlistId) {
+    for (const [catKey, list] of Object.entries(playlists)) {
+      const playlist = list.find(item => item.id === playlistId);
+      if (playlist) return { ...playlist, catKey };
     }
+    return null;
+  }
+
+  async function startInitialPlayback() {
+    if (shuffleState) {
+      try {
+        const response = await fetch(`${PLAYER_SERVER}/ready`);
+        if (response.status !== 204) {
+          const data = await response.json();
+          const choice = findPlaylistChoice(data.playlist_id);
+          if (data.url && choice) {
+            const { catKey } = choice;
+            currentCategoryKey = catKey;
+            currentPlaylist = choice.id;
+            renderPlaylistsForCategory(catKey);
+            setInitialActiveStates();
+            setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
+            showMessage(`Playing ${choice.name}`, 'info', 3000);
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn('Warm startup unavailable:', error);
+      }
+    }
+
+    const playlistName = playRandom();
+    if (playlistName) setTimeout(() => showMessage(`Playing ${playlistName}`, 'info', 3000), 500);
   }
 
   function chooseRandomPlaylist() {

@@ -12,7 +12,7 @@ Instead of the YouTube embed, two local servers handle everything:
 
 **`app.py`** (Flask, port 5020) serves the UI, QR codes, YouTube search, and watches for incoming video submissions. Playlists are fetched from [kershner.org](https://kershner.org) on startup and refreshed hourly, so the playlist library is managed remotely without touching the Pi.
 
-**`player_server.py`** (port 8765) uses yt-dlp to resolve YouTube IDs into direct MP4 stream URLs, which the native `<video>` element plays directly. Playlist video lists are cached for an hour, and one deduplicated background job pre-fetches the video that will actually play next so transitions are seamless without overloading the Pi. For videos longer than 5 hours, the stream URL is automatically refreshed before YouTube's ~6 hour expiry.
+**`player_server.py`** (port 8765) uses yt-dlp to resolve YouTube IDs into direct MP4 stream URLs, which the native `<video>` element plays directly. Playlist IDs and still-valid ready streams persist across service restarts, and one deduplicated background job pre-fetches the video that will actually play next so startup and transitions are seamless without overloading the Pi. For videos longer than 5 hours, the stream URL is automatically refreshed before YouTube's ~6 hour expiry.
 
 YouTube now requires Proof-of-Origin (PO) tokens for most direct media requests. The kiosk runs the maintained `bgutil-ytdlp-pot-provider` locally on port 4416 and uses its video-specific tokens when yt-dlp resolves each stream. Resolved URLs are probed before they reach Chromium so rejected URLs can be retried automatically.
 

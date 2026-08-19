@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from pathlib import Path
 import subprocess
 import threading
 import random
@@ -16,12 +17,14 @@ import json
 import time
 import sys
 import socket
+import os
 
 PORT = 8765
 POT_PROVIDER_HOST = "127.0.0.1"
 POT_PROVIDER_PORT = 4416
 STREAM_PROBE_BYTES = 1024
 MAX_RESOLVE_ATTEMPTS = 5
+VIDEO_RESOLVE_TIMEOUT = 90
 MWEB_USER_AGENT = (
     "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
@@ -38,7 +41,7 @@ SUBTITLE_REQUEST_HEADERS = {
 # Playlist video ID cache: playlist_id → {ids: [...], ts: float}
 _playlist_cache = {}
 _playlist_lock = threading.Lock()
-PLAYLIST_CACHE_TTL = 3600  # 1 hour
+PLAYLIST_CACHE_TTL = 86400  # 24 hours
 
 # Pre-fetched next stream URL cache: playlist_id → {url, video_id, ts}
 _prefetch_cache = {}
@@ -47,10 +50,54 @@ _prefetch_inflight = set()
 _prefetch_events = {}
 _prefetch_slot = threading.BoundedSemaphore(1)
 STREAM_URL_TTL = 18000  # 5 hours (YouTube URLs expire ~6h)
+CACHE_PATH = Path.home() / ".cache" / "pi_kiosk" / "player_cache.json"
+_cache_file_lock = threading.Lock()
 
 
 def log(msg):
     print(f"[player_server] {msg}", flush=True)
+
+
+def save_persistent_cache():
+    """Persist warm playlist and stream caches across server restarts."""
+    with _cache_file_lock:
+        with _playlist_lock:
+            playlists = dict(_playlist_cache)
+        with _prefetch_lock:
+            streams = dict(_prefetch_cache)
+        try:
+            CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = CACHE_PATH.with_suffix(".tmp")
+            temp_path.write_text(json.dumps({"playlists": playlists, "streams": streams}))
+            os.replace(temp_path, CACHE_PATH)
+        except OSError as e:
+            log(f"Could not save persistent cache: {e}")
+
+
+def load_persistent_cache():
+    """Restore only entries that are still safe to serve."""
+    try:
+        data = json.loads(CACHE_PATH.read_text())
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as e:
+        log(f"Ignoring invalid persistent cache: {e}")
+        return
+
+    now = time.time()
+    playlists = {
+        key: value for key, value in (data.get("playlists") or {}).items()
+        if now - value.get("ts", 0) < PLAYLIST_CACHE_TTL and value.get("ids")
+    }
+    streams = {
+        key: value for key, value in (data.get("streams") or {}).items()
+        if now - value.get("ts", 0) < STREAM_URL_TTL and value.get("url")
+    }
+    with _playlist_lock:
+        _playlist_cache.update(playlists)
+    with _prefetch_lock:
+        _prefetch_cache.update(streams)
+    log(f"Restored {len(playlists)} playlists and {len(streams)} ready streams")
 
 
 def run_ytdlp(*args, timeout=45):
@@ -137,6 +184,7 @@ def get_playlist_video_ids(playlist_id):
 
     with _playlist_lock:
         _playlist_cache[playlist_id] = {"ids": ids, "ts": time.time()}
+    save_persistent_cache()
 
     return ids
 
@@ -151,6 +199,7 @@ def resolve_stream_url(video_id):
         "-f", "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
         "-j",
         f"https://www.youtube.com/watch?v={video_id}",
+        timeout=VIDEO_RESOLVE_TIMEOUT,
     )
     info = json.loads(output)
     title = info.get("title", "")
@@ -206,6 +255,7 @@ def _prefetch_next(playlist_id, exclude_id=None):
         result = pick_and_resolve(playlist_id, exclude_id)
         with _prefetch_lock:
             _prefetch_cache[playlist_id] = {**result, "ts": time.time()}
+        save_persistent_cache()
         log(f"Prefetched {result['video_id']} for playlist {playlist_id}")
     except Exception as e:
         log(f"Prefetch failed for {playlist_id}: {e}")
@@ -260,8 +310,29 @@ def get_prefetched(playlist_id):
         cached = _prefetch_cache.get(playlist_id)
         if cached and time.time() - cached["ts"] < STREAM_URL_TTL:
             del _prefetch_cache[playlist_id]
-            return cached
+        else:
+            cached = None
+    if cached:
+        save_persistent_cache()
+        return cached
     return None
+
+
+def get_any_prefetched():
+    """Consume any warm stream, used to make shuffle startup immediate."""
+    now = time.time()
+    with _prefetch_lock:
+        valid = [
+            (playlist_id, value)
+            for playlist_id, value in _prefetch_cache.items()
+            if now - value["ts"] < STREAM_URL_TTL
+        ]
+        if not valid:
+            return None
+        playlist_id, result = random.choice(valid)
+        del _prefetch_cache[playlist_id]
+    save_persistent_cache()
+    return {**result, "playlist_id": playlist_id}
 
 
 def json_response(handler, data, status=200):
@@ -338,6 +409,11 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "missing playlist_id"}, 400)
             scheduled = schedule_prefetch(playlist_id, exclude_id)
             return json_response(self, {"ok": True, "scheduled": scheduled})
+
+        # GET /ready — consumes any persisted warm stream for fast startup.
+        if path == "/ready":
+            result = get_any_prefetched()
+            return json_response(self, result or {}, 200 if result else 204)
 
         # GET /resolve-video?video_id=xxx
         # Resolves a specific video (used when a video is submitted via QR code).
@@ -426,6 +502,7 @@ def check_dependencies():
 
 if __name__ == "__main__":
     check_dependencies()
+    load_persistent_cache()
     server = HTTPServer(("127.0.0.1", PORT), Handler)
     log(f"Listening on http://127.0.0.1:{PORT}")
     try:
