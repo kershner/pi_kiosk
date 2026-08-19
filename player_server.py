@@ -43,6 +43,9 @@ PLAYLIST_CACHE_TTL = 3600  # 1 hour
 # Pre-fetched next stream URL cache: playlist_id → {url, video_id, ts}
 _prefetch_cache = {}
 _prefetch_lock = threading.Lock()
+_prefetch_inflight = set()
+_prefetch_events = {}
+_prefetch_slot = threading.BoundedSemaphore(1)
 STREAM_URL_TTL = 18000  # 5 hours (YouTube URLs expire ~6h)
 
 
@@ -61,7 +64,14 @@ def run_ytdlp(*args, timeout=45):
         "--extractor-args", "youtube:player_client=mweb",
         *args,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    started = time.monotonic()
+    target = args[-1] if args else "request"
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log(f"yt-dlp timed out after {time.monotonic() - started:.1f}s for {target}")
+        raise
+    log(f"yt-dlp completed in {time.monotonic() - started:.1f}s for {target}")
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "yt-dlp failed")
     if result.stderr.strip():
@@ -135,6 +145,7 @@ def resolve_stream_url(video_id):
     """Get a direct stream URL, title, and English subtitle URL for a single video.
     Uses -j (dump JSON) which reliably returns both the selected format's
     stream URL and the video title in a single yt-dlp call."""
+    started = time.monotonic()
     log(f"Resolving stream for {video_id}...")
     output = run_ytdlp(
         "-f", "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
@@ -158,6 +169,8 @@ def resolve_stream_url(video_id):
         log(f"Selected {subtitle_source} language {subtitle_language} for {video_id}")
     else:
         log(f"No English subtitles found for {video_id}")
+
+    log(f"Resolved {video_id} in {time.monotonic() - started:.1f}s")
 
     return url, title, subtitle_url
 
@@ -187,8 +200,8 @@ def pick_and_resolve(playlist_id, exclude_id=None):
     )
 
 
-def prefetch_next(playlist_id, exclude_id=None):
-    """Background thread: pre-resolve next video so it's ready instantly."""
+def _prefetch_next(playlist_id, exclude_id=None):
+    """Worker for a single bounded background prefetch."""
     try:
         result = pick_and_resolve(playlist_id, exclude_id)
         with _prefetch_lock:
@@ -196,6 +209,49 @@ def prefetch_next(playlist_id, exclude_id=None):
         log(f"Prefetched {result['video_id']} for playlist {playlist_id}")
     except Exception as e:
         log(f"Prefetch failed for {playlist_id}: {e}")
+    finally:
+        with _prefetch_lock:
+            _prefetch_inflight.discard(playlist_id)
+            event = _prefetch_events.pop(playlist_id, None)
+            if event:
+                event.set()
+        _prefetch_slot.release()
+
+
+def schedule_prefetch(playlist_id, exclude_id=None):
+    """Start one deduplicated prefetch without overloading the Pi."""
+    with _prefetch_lock:
+        cached = _prefetch_cache.get(playlist_id)
+        if cached and time.time() - cached["ts"] < STREAM_URL_TTL:
+            return False
+        if cached:
+            del _prefetch_cache[playlist_id]
+        if playlist_id in _prefetch_inflight:
+            return False
+        if not _prefetch_slot.acquire(blocking=False):
+            log(f"Prefetch busy; skipped playlist {playlist_id}")
+            return False
+        _prefetch_inflight.add(playlist_id)
+        _prefetch_events[playlist_id] = threading.Event()
+
+    threading.Thread(
+        target=_prefetch_next,
+        args=(playlist_id, exclude_id),
+        daemon=True,
+    ).start()
+    log(f"Scheduled prefetch for playlist {playlist_id}")
+    return True
+
+
+def wait_for_prefetch(playlist_id):
+    """Join an in-flight prefetch instead of launching duplicate yt-dlp work."""
+    with _prefetch_lock:
+        event = _prefetch_events.get(playlist_id)
+    if not event:
+        return None
+    log(f"Waiting for in-flight prefetch for playlist {playlist_id}")
+    event.wait()
+    return get_prefetched(playlist_id)
 
 
 def get_prefetched(playlist_id):
@@ -244,6 +300,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/next":
             playlist_id = (qs.get("playlist_id") or [None])[0]
             exclude_id = (qs.get("exclude") or [None])[0]
+            should_prefetch = (qs.get("prefetch") or ["1"])[0] != "0"
 
             if not playlist_id:
                 return json_response(self, {"error": "missing playlist_id"}, 400)
@@ -251,32 +308,36 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # Try prefetch cache first (instant response)
                 result = get_prefetched(playlist_id)
+                if not result:
+                    result = wait_for_prefetch(playlist_id)
 
                 if result:
                     log(f"Serving prefetched {result['video_id']}")
-                    # Kick off next prefetch in background
-                    threading.Thread(
-                        target=prefetch_next,
-                        args=(playlist_id, result["video_id"]),
-                        daemon=True,
-                    ).start()
+                    if should_prefetch:
+                        schedule_prefetch(playlist_id, result["video_id"])
                     return json_response(self, result)
 
                 # No prefetch — resolve now
                 result = pick_and_resolve(playlist_id, exclude_id)
 
-                # Kick off next prefetch immediately
-                threading.Thread(
-                    target=prefetch_next,
-                    args=(playlist_id, result["video_id"]),
-                    daemon=True,
-                ).start()
+                if should_prefetch:
+                    schedule_prefetch(playlist_id, result["video_id"])
 
                 return json_response(self, result)
 
             except Exception as e:
                 log(f"Error in /next: {e}")
                 return json_response(self, {"error": str(e)}, 500)
+
+        # GET /prefetch?playlist_id=xxx[&exclude=video_id]
+        # Queues the playlist that shuffle mode will actually play next.
+        if path == "/prefetch":
+            playlist_id = (qs.get("playlist_id") or [None])[0]
+            exclude_id = (qs.get("exclude") or [None])[0]
+            if not playlist_id:
+                return json_response(self, {"error": "missing playlist_id"}, 400)
+            scheduled = schedule_prefetch(playlist_id, exclude_id)
+            return json_response(self, {"ok": True, "scheduled": scheduled})
 
         # GET /resolve-video?video_id=xxx
         # Resolves a specific video (used when a video is submitted via QR code).

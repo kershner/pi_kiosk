@@ -24,6 +24,7 @@ const PiStuff = (() => {
   let controlsTimer = null;
   let loadAbortController = null;
   let captionsEnabled = true;
+  let queuedShufflePlaylist = null;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -268,6 +269,7 @@ const PiStuff = (() => {
       if (videoHistory.length > 20) videoHistory.shift();
       lastVideoId = videoId;
     }
+    if (shuffleState) queueShufflePrefetch();
   }
 
   async function playVideo(videoId) {
@@ -299,6 +301,7 @@ const PiStuff = (() => {
     try {
       const params = new URLSearchParams({ playlist_id: playlistId });
       if (lastVideoId) params.set('exclude', lastVideoId);
+      if (shuffleState) params.set('prefetch', '0');
 
       const r = await fetch(`${PLAYER_SERVER}/next?${params}`, { signal: controller.signal });
       const data = await r.json();
@@ -327,6 +330,7 @@ const PiStuff = (() => {
   }
 
   function loadPlaylist(playlistId, playlistName) {
+    queuedShufflePlaylist = null;
     currentPlaylist = playlistId;
     consecutiveSkips = 0;
     lastVideoId = null;
@@ -378,18 +382,26 @@ const PiStuff = (() => {
     }
   }
 
-  function playRandom() {
+  function chooseRandomPlaylist() {
     const cats = Object.keys(playlists);
-    if (!cats.length) return false;
+    if (!cats.length) return null;
 
     const catKey = shuffleCategory === 'all'
       ? cats[Math.floor(Math.random() * cats.length)]
       : shuffleCategory;
 
     const list = playlists[catKey];
-    if (!list?.length) return false;
+    if (!list?.length) return null;
 
-    const randomPlaylist = list[Math.floor(Math.random() * list.length)];
+    const alternatives = list.filter(p => p.id !== currentPlaylist);
+    const candidates = alternatives.length ? alternatives : list;
+    const playlist = candidates[Math.floor(Math.random() * candidates.length)];
+    return { ...playlist, catKey };
+  }
+
+  function playRandomChoice(choice) {
+    if (!choice) return false;
+    const { catKey, ...randomPlaylist } = choice;
 
     $all('[data-category]').forEach(b => b.classList.remove('selected'));
     $all('[data-playlist]').forEach(b => b.classList.remove('selected'));
@@ -403,6 +415,28 @@ const PiStuff = (() => {
       showMessage(`Playing ${randomPlaylist.name}...`, 'info', 2000);
     }, 100);
     return loadPlaylist(randomPlaylist.id, randomPlaylist.name);
+  }
+
+  function playRandom() {
+    return playRandomChoice(chooseRandomPlaylist());
+  }
+
+  function queueShufflePrefetch() {
+    if (!shuffleState || queuedShufflePlaylist) return;
+    const choice = chooseRandomPlaylist();
+    if (!choice) return;
+    queuedShufflePlaylist = choice;
+    const params = new URLSearchParams({ playlist_id: choice.id });
+    if (currentVideoId) params.set('exclude', currentVideoId);
+    fetch(`${PLAYER_SERVER}/prefetch?${params}`).catch(err => {
+      console.warn('Shuffle prefetch failed:', err);
+    });
+  }
+
+  function playQueuedShuffle() {
+    const choice = queuedShufflePlaylist;
+    queuedShufflePlaylist = null;
+    return playRandomChoice(choice || chooseRandomPlaylist());
   }
 
   function initMenu() {
@@ -476,6 +510,8 @@ const PiStuff = (() => {
           shuffleBtn.classList.remove('selected', 'locked');
           setTimeout(() => showMessage('Shuffle off', 'info', 2000), 100);
         }
+        queuedShufflePlaylist = null;
+        if (shuffleState && currentVideoId) queueShufflePrefetch();
         return;
       }
       if (actualAction === 'screen') {
@@ -508,7 +544,7 @@ const PiStuff = (() => {
     // Mirrors YT.PlayerState.ENDED handling
     video.addEventListener('ended', () => {
       if (switchingPlaylist) return;
-      if (shuffleState) return playRandom();
+      if (shuffleState) return playQueuedShuffle();
       loadNextFromPlaylist(currentPlaylist);
     });
 
