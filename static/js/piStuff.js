@@ -458,7 +458,6 @@ const PiStuff = (() => {
             renderPlaylistsForCategory(catKey);
             setInitialActiveStates();
             setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
-            showMessage(`Playing ${choice.name}`, 'info', 3000);
             return;
           }
         }
@@ -467,8 +466,7 @@ const PiStuff = (() => {
       }
     }
 
-    const playlistName = playRandom();
-    if (playlistName) setTimeout(() => showMessage(`Playing ${playlistName}`, 'info', 3000), 500);
+    playRandom();
   }
 
   function chooseRandomPlaylist() {
@@ -500,9 +498,6 @@ const PiStuff = (() => {
     currentPlaylist = randomPlaylist.id;
     renderPlaylistsForCategory(catKey);
 
-    setTimeout(() => {
-      showMessage(`Playing ${randomPlaylist.name}...`, 'info', 2000);
-    }, 100);
     return loadPlaylist(randomPlaylist.id, randomPlaylist.name);
   }
 
@@ -561,7 +556,6 @@ const PiStuff = (() => {
         loadPlaylist(playlist, playlistName);
         menu.hidden = true;
         toggleQr(false);
-        setTimeout(() => showMessage(`Playing ${playlistName}`, 'info', 2000), 100);
         return;
       }
 
@@ -576,7 +570,6 @@ const PiStuff = (() => {
         if (!playlistName) return;
         menu.hidden = true;
         toggleQr(false);
-        setTimeout(() => showMessage(`Playing ${playlistName}`, 'info', 2000), 100);
         return;
       }
       if (actualAction === 'shuffle') {
@@ -795,10 +788,8 @@ const PiStuff = (() => {
           initialPaused = video.paused;
           if (initialPaused) {
             video.play().catch(() => {});
-            showMessage('Playing', 'info', 1500);
           } else {
             video.pause();
-            showMessage('Paused', 'info', 1500);
           }
           showControls(!initialPaused);
           tapCount = 1;
