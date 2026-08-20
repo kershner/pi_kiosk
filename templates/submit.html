@@ -42,11 +42,6 @@
   </div>
 {% endblock %}
 
-{% block window_vars %}
-  window.SUBMIT_TOKEN = "{{ token }}";
-  window.SUBMIT_DEVICE_ID = "{{ device_id }}";
-{% endblock %}
-
 {% block page_script %}
   <script type="module" src="{{ url_for('static', filename='js/submitForm.js') }}"></script>
 {% endblock %}

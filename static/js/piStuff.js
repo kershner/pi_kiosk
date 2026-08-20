@@ -1,878 +1,685 @@
-const PiStuff = (() => {
-  const POLL_INTERVAL_MS = 2500;
-  const PLAYER_API = '/api/player';
-  const CAPTIONS_STORAGE_KEY = 'pi-kiosk-captions-enabled';
-  const $ = s => document.querySelector(s);
-  const $all = s => document.querySelectorAll(s);
+const $ = selector => document.querySelector(selector);
+const $$ = selector => document.querySelectorAll(selector);
+const PLAYER_API = '/api/player';
+const CAPTIONS_KEY = 'pi-kiosk-captions-enabled';
+const SHUFFLE_ALL = '*';
 
-  let deviceId, currentPlaylist, skipTimer, pollIntervalId;
-  let consecutiveSkips = 0;
-  let lastVideoId = null;
-  let lastTsSeen = 0;
-  let shuffleState = false;
-  let shuffleCategory = 'all';
-  let playlists = {};
-  let categoryNames = {};
-  let currentCategoryKey = null;
-  let currentPlaylistName = '';
-  let qrVisible = false;
-  let switchingPlaylist = false;
-  let videoHistory = [];
-  let currentTitle = '';
-  let messageTimer = null;
-  let streamRefreshTimer = null;
-  let currentVideoId = null;
-  let controlsTimer = null;
-  let loadAbortController = null;
-  let captionsEnabled = localStorage.getItem(CAPTIONS_STORAGE_KEY) !== 'false';
-  let queuedShufflePlaylist = null;
-  let nowPlayingTimer = null;
-  let videoLoading = false;
-  let hasStartedCurrentVideo = false;
-  let resumingFromPause = false;
+const state = {
+  deviceId: null,
+  catalog: {},
+  categoryNames: {},
+  playlistIndex: new Map(),
+  category: null,
+  playlistId: null,
+  playlistName: '',
+  videoId: null,
+  lastVideoId: null,
+  title: '',
+  history: [],
+  queuedChoice: null,
+  shuffleScope: null,
+  errors: 0,
+  loading: false,
+  switchingPlaylist: false,
+  started: false,
+  resuming: false,
+  latestTs: 0,
+  request: null,
+  captions: localStorage.getItem(CAPTIONS_KEY) !== 'false',
+};
 
-  function getVideo() {
-    return document.getElementById('video-player');
+const timers = {};
+const dom = {};
+
+function clearTimer(name) {
+  clearTimeout(timers[name]);
+  timers[name] = null;
+}
+
+function schedule(name, callback, delay) {
+  clearTimer(name);
+  timers[name] = setTimeout(callback, delay);
+}
+
+function cacheDom() {
+  Object.assign(dom, {
+    video: $('#video-player'),
+    menu: $('#menu'),
+    menuButton: $('.menu-button'),
+    playlists: $('#playlists'),
+    qr: $('#qr-container'),
+    message: $('#display-message'),
+    nowPlaying: $('#now-playing'),
+    status: $('#now-playing-status'),
+    context: $('#now-playing-context'),
+    duration: $('#now-playing-duration'),
+    title: $('#now-playing-title'),
+    hud: $('#video-hud'),
+    progress: $('#progress-bar'),
+    progressFill: $('#progress-fill'),
+    currentTime: $('#time-current'),
+    remainingTime: $('#time-remaining'),
+    captions: $('#cc-toggle'),
+  });
+}
+
+function ensureDeviceId() {
+  let id = localStorage.getItem('pi_device_id');
+  if (!id) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    id = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('pi_device_id', id);
   }
 
-  function ensureDeviceId() {
-    let id = localStorage.getItem('pi_device_id');
-    if (!id) {
-      const bytes = crypto.getRandomValues(new Uint8Array(16));
-      id = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-      localStorage.setItem('pi_device_id', id);
-    }
+  const params = new URLSearchParams(location.search);
+  if (params.has('device_id')) return id;
+  params.set('device_id', id);
+  location.search = params.toString();
+  return null;
+}
 
-    const params = new URLSearchParams(location.search);
-    if (params.has('device_id')) return id;
-    params.set('device_id', id);
-    location.search = params.toString();
-    return null;
+function loadCatalog() {
+  for (const category of window.CATEGORIES_DATA || []) {
+    const key = category.name.toLowerCase();
+    const playlists = (category.playlists || []).map(item => ({
+      id: item.youtube_playlist_id,
+      name: item.name,
+      category: key,
+    }));
+    state.catalog[key] = playlists;
+    state.categoryNames[key] = category.name;
+    playlists.forEach(playlist => state.playlistIndex.set(playlist.id, playlist));
   }
+}
 
-  function applyQueryParams() {
-    const p = new URLSearchParams(location.search);
-    const video = p.get('video') || p.get('v');
-    const playlist = p.get('playlist') || p.get('list');
-    const category = p.get('category') || p.get('cat');
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return hours
+    ? `${hours}:${String(minutes % 60).padStart(2, '0')}:${secs}`
+    : `${minutes}:${secs}`;
+}
 
-    if (p.get('shuffle') === 'true') shuffleState = true;
+function showMessage(text, duration = 2000) {
+  if (!dom.message || text === 'Playing' || text === 'Paused') return;
+  dom.message.textContent = text;
+  dom.message.className = 'display-message show';
+  schedule('message', () => dom.message.classList.remove('show'), duration);
+}
 
-    if (category && playlists[category]) {
-      currentCategoryKey = category;
-      $(`[data-category="${category}"]`)?.classList.add('selected');
-      renderPlaylistsForCategory(category);
-    }
+function showNowPlaying(status = '', loading = false) {
+  clearTimer('nowPlaying');
+  dom.status.textContent = status;
+  dom.status.hidden = !status;
+  dom.nowPlaying.classList.toggle('loading', loading);
+  dom.nowPlaying.classList.add('visible');
+}
 
-    if (playlist) {
-      let name = 'playlist';
-      for (const [catKey, cat] of Object.entries(playlists)) {
-        const pl = cat.find(x => x.id === playlist);
-        if (pl) {
-          name = pl.name;
-          currentCategoryKey = catKey;
-          break;
-        }
-      }
-      currentPlaylist = playlist;
-      loadPlaylist(playlist, name);
-    } else if (video) {
-      setTimeout(() => playVideo(video), 500);
-    } else {
-      startInitialPlayback();
-    }
+function hideNowPlayingAfter(delay) {
+  schedule('nowPlaying', () => {
+    if (!dom.video.paused) dom.nowPlaying.classList.remove('visible');
+  }, delay);
+}
 
-    if (shuffleState) $('#menu [data-action="shuffle"]')?.classList.add('selected');
-  }
+function setContext(category = state.category, playlistName = state.playlistName) {
+  const categoryName = state.categoryNames[category] || category || '';
+  const text = [categoryName, playlistName].filter(Boolean).join('  •  ');
+  dom.context.textContent = text;
+  dom.context.hidden = !text;
+}
 
-  function showMessage(text, type = 'info', duration = 3000) {
-    if (text === 'Playing' || text === 'Paused') return;
-    const msgEl = $('#display-message');
-    if (!msgEl) return;
-    clearTimeout(messageTimer);
-    msgEl.textContent = text;
-    msgEl.className = 'display-message show ' + type;
-    messageTimer = setTimeout(() => msgEl.classList.remove('show'), duration);
-  }
+function setDuration(duration) {
+  const valid = Number.isFinite(duration) && duration > 0;
+  dom.duration.textContent = valid ? formatTime(duration) : '';
+  dom.duration.hidden = !valid;
+}
 
-  function setVideoTitle(title) {
-    const largeTitle = document.getElementById('now-playing-title');
-    if (largeTitle) largeTitle.textContent = title;
-  }
+function beginLoading() {
+  state.loading = true;
+  showNowPlaying(state.title ? 'Loading next video' : 'Loading video', true);
+}
 
-  function setVideoDuration(duration) {
-    const durationEl = document.getElementById('now-playing-duration');
-    if (!durationEl) return;
-    const valid = isFinite(duration) && duration > 0;
-    durationEl.textContent = valid ? formatTime(duration) : '';
-    durationEl.hidden = !valid;
-  }
+function endLoading() {
+  dom.nowPlaying.classList.remove('loading');
+}
 
-  function setNowPlayingContext(categoryKey, playlistName) {
-    const context = document.getElementById('now-playing-context');
-    if (!context) return;
-    const categoryName = categoryKey ? (categoryNames[categoryKey] || categoryKey) : '';
-    const text = [categoryName, playlistName].filter(Boolean).join('  •  ');
-    context.textContent = text;
-    context.hidden = !text;
-  }
+function showHud(persist = false) {
+  clearTimer('hud');
+  dom.hud.classList.add('visible');
+  if (!persist) schedule('hud', () => dom.hud.classList.remove('visible'), 3000);
+}
 
-  function showNowPlaying(status = '', loading = false) {
-    clearTimeout(nowPlayingTimer);
-    const overlay = document.getElementById('now-playing');
-    const statusEl = document.getElementById('now-playing-status');
-    if (statusEl) {
-      statusEl.textContent = status;
-      statusEl.hidden = !status;
-    }
-    overlay?.classList.toggle('loading', loading);
-    overlay?.classList.add('visible');
-  }
+function hideHud() {
+  clearTimer('hud');
+  dom.hud.classList.remove('visible');
+}
 
-  function hideNowPlayingAfterDelay(delay) {
-    clearTimeout(nowPlayingTimer);
-    nowPlayingTimer = setTimeout(() => {
-      const video = getVideo();
-      if (!video || !video.paused) {
-        document.getElementById('now-playing')?.classList.remove('visible');
-      }
-    }, delay);
-  }
+function updateProgress() {
+  const current = dom.video.currentTime || 0;
+  const duration = dom.video.duration || 0;
+  dom.progressFill.style.width = `${duration ? current / duration * 100 : 0}%`;
+  dom.currentTime.textContent = formatTime(current);
+  dom.remainingTime.textContent = duration ? `-${formatTime(duration - current)}` : '-0:00';
+}
 
-  function showLoadingState() {
-    videoLoading = true;
-    showNowPlaying(currentTitle ? 'Loading next video' : 'Loading video', true);
-  }
+function initScrubber() {
+  let dragging = false;
+  const scrub = event => {
+    if (!dom.video.duration) return;
+    const rect = dom.progress.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    dom.video.currentTime = ratio * dom.video.duration;
+  };
 
-  function hideLoadingState() {
-    document.getElementById('now-playing')?.classList.remove('loading');
-  }
+  dom.progress.addEventListener('pointerdown', event => {
+    dragging = true;
+    dom.progress.setPointerCapture(event.pointerId);
+    scrub(event);
+  });
+  dom.progress.addEventListener('pointermove', event => {
+    if (dragging) scrub(event);
+  });
+  ['pointerup', 'pointercancel'].forEach(type => {
+    dom.progress.addEventListener(type, () => { dragging = false; });
+  });
+}
 
-  // ─── Video controls (progress bar + time) ────────────────────────────────────
+function addCaptionTrack(url) {
+  const track = document.createElement('track');
+  Object.assign(track, {
+    id: 'subtitle-track',
+    kind: 'subtitles',
+    srclang: 'en',
+    label: 'English',
+    src: `/proxy-subtitle?url=${encodeURIComponent(url)}`,
+    default: true,
+  });
+  track.addEventListener('load', () => {
+    if (dom.video.textTracks[0]) dom.video.textTracks[0].mode = 'showing';
+  });
+  dom.video.appendChild(track);
+}
 
-  function showControls(persist = false) {
-    const el = $('#video-hud');
-    if (!el) return;
-    clearTimeout(controlsTimer);
-    el.classList.add('visible');
-    if (!persist) {
-      controlsTimer = setTimeout(() => el.classList.remove('visible'), 3000);
-    }
-  }
+function applyCaptions() {
+  $('#subtitle-track')?.remove();
+  const url = dom.video.dataset.subtitleUrl;
+  if (state.captions && url) addCaptionTrack(url);
+}
 
-  function hideControls() {
-    clearTimeout(controlsTimer);
-    $('#video-hud')?.classList.remove('visible');
-  }
+function setCaptionSource(url = '') {
+  dom.video.dataset.subtitleUrl = url;
+  applyCaptions();
+}
 
-  function formatTime(seconds) {
-    if (!isFinite(seconds) || seconds < 0) return '0:00';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    if (h) return `${h}:${(m % 60).toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
+function initCaptions() {
+  dom.captions.classList.toggle('active', state.captions);
+  dom.captions.addEventListener('click', event => {
+    event.stopPropagation();
+    state.captions = !state.captions;
+    localStorage.setItem(CAPTIONS_KEY, state.captions);
+    dom.captions.classList.toggle('active', state.captions);
+    applyCaptions();
+  });
+}
 
-  function updateProgress() {
-    const video = getVideo();
-    if (!video) return;
-    const current = video.currentTime || 0;
-    const duration = video.duration || 0;
-    const pct = duration > 0 ? (current / duration) * 100 : 0;
-    const fill = $('#progress-fill');
-    if (fill) fill.style.width = `${pct}%`;
-    const elCurrent = $('#time-current');
-    const elRemaining = $('#time-remaining');
-    if (elCurrent) elCurrent.textContent = formatTime(current);
-    if (elRemaining) elRemaining.textContent = duration > 0 ? `-${formatTime(duration - current)}` : '-0:00';
-  }
+function toggleQr(show) {
+  dom.playlists.hidden = show;
+  dom.qr.hidden = !show;
+}
 
-  function initProgressBar() {
-    const bar = $('#progress-bar');
-    if (!bar) return;
-
-    function scrubTo(e) {
-      const video = getVideo();
-      if (!video || !video.duration) return;
-      const rect = bar.getBoundingClientRect();
-      const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-      video.currentTime = Math.max(0, Math.min(1, x / rect.width)) * video.duration;
-    }
-
-    bar.addEventListener('click', scrubTo);
-
-    let dragging = false;
-    bar.addEventListener('touchstart', () => { dragging = true; }, { passive: true });
-    bar.addEventListener('touchmove', e => { if (dragging) scrubTo(e); }, { passive: true });
-    bar.addEventListener('touchend', () => { dragging = false; });
-  }
-
-  // ─── Subtitles ───────────────────────────────────────────────────────────────
-
-  function appendSubtitleTrack(video, subtitleUrl) {
-    const track = document.createElement('track');
-    track.id = 'subtitle-track';
-    track.kind = 'subtitles';
-    track.srclang = 'en';
-    track.label = 'English';
-    track.src = `/proxy-subtitle?url=${encodeURIComponent(subtitleUrl)}`;
-    track.default = true;
-    track.addEventListener('load', () => {
-      if (video.textTracks[0]) video.textTracks[0].mode = 'showing';
+async function regenerateQr() {
+  if (!state.deviceId) return showMessage('Device ID not found');
+  const button = $('[data-action="regenerate-qr"]');
+  const image = button?.querySelector('img');
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/regenerate-qr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ device_id: state.deviceId }),
     });
-    video.appendChild(track);
+    if (!response.ok) throw new Error('QR request failed');
+    const data = await response.json();
+    if (image && data.qr_code_b64) image.src = `data:image/png;base64,${data.qr_code_b64}`;
+    showMessage('✓ QR code regenerated!', 3000);
+  } catch (error) {
+    console.error('QR regeneration failed:', error);
+    showMessage('Failed to regenerate QR code', 3000);
+  } finally {
+    if (button) button.disabled = false;
   }
+}
 
-  function setSubtitleTrack(subtitleUrl) {
-    const video = getVideo();
-    if (!video) return;
-    const existing = document.getElementById('subtitle-track');
-    if (existing) existing.remove();
-    video.dataset.subtitleUrl = subtitleUrl || '';
-    if (!subtitleUrl || !captionsEnabled) return;
-    appendSubtitleTrack(video, subtitleUrl);
+function cancelRequest() {
+  state.request?.abort();
+  state.request = null;
+}
+
+function setVideoSource(data) {
+  clearTimer('streamRefresh');
+  state.title = data.title || '';
+  state.videoId = data.video_id;
+  state.started = false;
+  state.resuming = false;
+  dom.title.textContent = state.title;
+  setDuration(null);
+  showNowPlaying('Starting video', true);
+  setCaptionSource(data.subtitle_url);
+
+  dom.video.src = data.url;
+  dom.video.load();
+  dom.video.play().catch(error => console.error('play() failed:', error));
+
+  if (data.video_id) {
+    if (state.lastVideoId) state.history.push(state.lastVideoId);
+    if (state.history.length > 20) state.history.shift();
+    state.lastVideoId = data.video_id;
   }
+  if (state.shuffleScope) queueShufflePrefetch();
+}
 
-  function initCCButton() {
-    const btn = document.getElementById('cc-toggle');
-    if (!btn) return;
-    btn.classList.toggle('active', captionsEnabled);
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const video = getVideo();
-      captionsEnabled = !captionsEnabled;
-      localStorage.setItem(CAPTIONS_STORAGE_KEY, String(captionsEnabled));
-      btn.classList.toggle('active', captionsEnabled);
-      const subtitleUrl = video?.dataset.subtitleUrl || '';
-      const existing = document.getElementById('subtitle-track');
-      if (existing) existing.remove();
-      if (captionsEnabled && subtitleUrl) appendSubtitleTrack(video, subtitleUrl);
-    });
+async function playerRequest(endpoint, params, signal) {
+  const response = await fetch(`${PLAYER_API}/${endpoint}?${new URLSearchParams(params)}`, { signal });
+  const data = await response.json();
+  if (!response.ok || !data.url) throw new Error(data.error || 'No playable stream returned');
+  return data;
+}
+
+async function resolveAndPlay({ videoId = null, playlistId = null }) {
+  cancelRequest();
+  const controller = new AbortController();
+  state.request = controller;
+  beginLoading();
+
+  const direct = Boolean(videoId);
+  const params = direct
+    ? { video_id: videoId }
+    : { playlist_id: playlistId };
+  if (!direct && state.lastVideoId) params.exclude = state.lastVideoId;
+  if (!direct && state.shuffleScope) params.prefetch = '0';
+
+  try {
+    const data = await playerRequest(direct ? 'resolve' : 'next', params, controller.signal);
+    if (state.request !== controller) return false;
+    setVideoSource(data);
+    return true;
+  } catch (error) {
+    if (error.name === 'AbortError') return false;
+    console.error('Video resolution failed:', error);
+    if (playlistId) skipUnplayable();
+    else showMessage('Could not play video', 3000);
+    return false;
+  } finally {
+    if (state.request === controller) state.request = null;
   }
+}
 
-  function cancelLoad() {
-    if (loadAbortController) {
-      loadAbortController.abort();
-      loadAbortController = null;
-    }
+function playVideo(videoId) {
+  state.playlistName = '';
+  setContext(null, '');
+  return resolveAndPlay({ videoId });
+}
+
+function loadNext(playlistId = state.playlistId) {
+  return playlistId ? resolveAndPlay({ playlistId }) : Promise.resolve(false);
+}
+
+function skipUnplayable() {
+  state.errors += 1;
+  if (state.errors <= 8) return loadNext();
+  state.errors = 0;
+  showMessage('Too many unplayable videos. Check playlist.', 5000);
+  return playRandom();
+}
+
+function findChoice(playlistId) {
+  return state.playlistIndex.get(playlistId) || null;
+}
+
+function loadPlaylist(playlistId, name = 'playlist') {
+  const choice = findChoice(playlistId);
+  if (choice) {
+    state.category = choice.category;
+    if (!name || ['playlist', 'Submitted playlist'].includes(name)) name = choice.name;
   }
+  state.queuedChoice = null;
+  state.playlistId = playlistId;
+  state.playlistName = name || 'playlist';
+  state.errors = 0;
+  state.lastVideoId = null;
+  state.switchingPlaylist = true;
+  setContext();
+  loadNext().finally(() => { state.switchingPlaylist = false; });
+  return state.playlistName;
+}
 
-  function toggleQr(show) {
-    const container = $('#qr-container');
-    const playlistsEl = $('#playlists');
-    if (!container) return;
+function renderPlaylists(category = state.category) {
+  const playlists = state.catalog[category] || [];
+  dom.playlists.innerHTML = playlists.length
+    ? playlists.map(item => (
+      `<button data-playlist="${item.id}" class="playlist-button${item.id === state.playlistId ? ' selected' : ''}">${item.name}</button>`
+    )).join('')
+    : '<p class="no-playlists">No playlists in this category</p>';
+}
 
-    playlistsEl.hidden = show;
-    container.hidden = !show;
-    qrVisible = show;
-  }
+function selectCategory(category) {
+  if (!state.catalog[category]) return;
+  state.category = category;
+  $$('[data-category]').forEach(button => {
+    button.classList.toggle('selected', button.dataset.category === category);
+  });
+  renderPlaylists(category);
+  toggleQr(false);
+}
 
-  async function regenerateQrCode() {
-    if (!deviceId) return showMessage('Device ID not found', 'error');
+function chooseRandomPlaylist() {
+  const categories = Object.keys(state.catalog);
+  if (!categories.length) return null;
+  const category = state.shuffleScope && state.shuffleScope !== SHUFFLE_ALL
+    ? state.shuffleScope
+    : categories[Math.floor(Math.random() * categories.length)];
+  const playlists = state.catalog[category] || [];
+  const alternatives = playlists.filter(item => item.id !== state.playlistId);
+  const choices = alternatives.length ? alternatives : playlists;
+  return choices.length ? choices[Math.floor(Math.random() * choices.length)] : null;
+}
 
-    const button = $('[data-action="regenerate-qr"]');
-    const qrImg = button?.querySelector('img');
-    if (button) button.disabled = true;
+function playChoice(choice) {
+  if (!choice) return false;
+  selectCategory(choice.category);
+  dom.menu.hidden = true;
+  return loadPlaylist(choice.id, choice.name);
+}
 
+function playRandom() {
+  return playChoice(chooseRandomPlaylist());
+}
+
+function queueShufflePrefetch() {
+  if (!state.shuffleScope || state.queuedChoice) return;
+  const choice = chooseRandomPlaylist();
+  if (!choice) return;
+  state.queuedChoice = choice;
+  const params = { playlist_id: choice.id };
+  if (state.videoId) params.exclude = state.videoId;
+  fetch(`${PLAYER_API}/prefetch?${new URLSearchParams(params)}`)
+    .catch(error => console.warn('Shuffle prefetch failed:', error));
+}
+
+function playQueuedShuffle() {
+  const choice = state.queuedChoice || chooseRandomPlaylist();
+  state.queuedChoice = null;
+  return playChoice(choice);
+}
+
+async function startPlayback() {
+  beginLoading();
+  if (state.shuffleScope) {
     try {
-      const formData = new URLSearchParams({ device_id: deviceId });
-
-      const response = await fetch('/regenerate-qr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error('Failed to regenerate QR code');
-
-      const data = await response.json();
-      if (qrImg && data.qr_code_b64) {
-        qrImg.src = `data:image/png;base64,${data.qr_code_b64}`;
-        showMessage(data.regenerated ? '✓ QR code regenerated!' : '✓ QR code is still valid!', 'success');
+      const response = await fetch(`${PLAYER_API}/ready`);
+      if (response.status !== 204) {
+        const data = await response.json();
+        const choice = findChoice(data.playlist_id);
+        if (data.url && choice) {
+          state.category = choice.category;
+          state.playlistId = choice.id;
+          state.playlistName = choice.name;
+          selectCategory(choice.category);
+          setContext();
+          setVideoSource(data);
+          return;
+        }
       }
     } catch (error) {
-      console.error('QR regeneration error:', error);
-      showMessage('Failed to regenerate QR code', 'error');
-    } finally {
-      if (button) button.disabled = false;
+      console.warn('Warm startup unavailable:', error);
     }
   }
+  playRandom();
+}
 
-  // ─── Playback ───────────────────────────────────────────────────────────────
-  // Native video element fed direct stream URLs resolved by the Flask API.
+function updateShuffleButton() {
+  const button = $('[data-action="shuffle"]');
+  button.classList.toggle('selected', Boolean(state.shuffleScope));
+  button.classList.toggle('locked', Boolean(state.shuffleScope && state.shuffleScope !== SHUFFLE_ALL));
+}
 
-  function setVideoSource(url, videoId, title = '', subtitleUrl = '') {
-    const video = getVideo();
-    if (!video) return;
-
-    clearTimeout(skipTimer);
-    clearTimeout(streamRefreshTimer);
-    currentTitle = title;
-    currentVideoId = videoId;
-    hasStartedCurrentVideo = false;
-    resumingFromPause = false;
-    setVideoTitle(title);
-    setVideoDuration(null);
-    showNowPlaying('Starting video', true);
-    setSubtitleTrack(subtitleUrl);
-    video.src = url;
-    video.load();
-    video.play().catch(err => console.error('play() failed:', err));
-
-    if (videoId) {
-      if (lastVideoId) videoHistory.push(lastVideoId);
-      if (videoHistory.length > 20) videoHistory.shift();
-      lastVideoId = videoId;
-    }
-    if (shuffleState) queueShufflePrefetch();
+function cycleShuffle() {
+  if (!state.shuffleScope) {
+    state.shuffleScope = SHUFFLE_ALL;
+    showMessage('Shuffle on');
+  } else if (state.shuffleScope === SHUFFLE_ALL && state.category) {
+    state.shuffleScope = state.category;
+    showMessage(`Shuffle locked to ${state.category}`);
+  } else {
+    state.shuffleScope = null;
+    showMessage('Shuffle off');
   }
+  state.queuedChoice = null;
+  updateShuffleButton();
+  if (state.shuffleScope && state.videoId) queueShufflePrefetch();
+}
 
-  async function resolveAndPlay({ videoId = null, playlistId = null }) {
-    cancelLoad();
-    const controller = new AbortController();
-    loadAbortController = controller;
-    showLoadingState();
+function initMenu() {
+  const actions = {
+    qr: () => toggleQr(true),
+    'regenerate-qr': regenerateQr,
+    reload: () => location.reload(),
+    random: playRandom,
+    shuffle: cycleShuffle,
+    screen: () => {
+      document.body.classList.add('screen-off');
+      dom.menu.hidden = true;
+    },
+    close: () => { dom.menu.hidden = true; },
+  };
 
-    const params = new URLSearchParams();
-    let endpoint;
-    if (videoId) {
-      endpoint = 'resolve';
-      params.set('video_id', videoId);
-    } else {
-      endpoint = 'next';
-      params.set('playlist_id', playlistId);
-      if (lastVideoId) params.set('exclude', lastVideoId);
-      if (shuffleState) params.set('prefetch', '0');
+  dom.menuButton.addEventListener('click', () => { dom.menu.hidden = false; });
+  dom.menu.addEventListener('click', event => {
+    const target = event.target.closest('[data-category],[data-playlist],[data-action]');
+    if (!target) return;
+    if (target.dataset.category) return selectCategory(target.dataset.category);
+    if (target.dataset.playlist) {
+      const choice = findChoice(target.dataset.playlist);
+      playChoice(choice || { id: target.dataset.playlist, name: 'playlist', category: state.category });
+      toggleQr(false);
+      return;
     }
+    if (['regenerate-qr', 'screen'].includes(target.dataset.action)) event.stopPropagation();
+    actions[target.dataset.action]?.();
+  });
 
+  document.body.addEventListener('click', event => {
+    if (document.body.classList.contains('screen-off') && !event.target.closest('.menu-button')) {
+      document.body.classList.remove('screen-off');
+    }
+  });
+}
+
+function scheduleStreamRefresh() {
+  clearTimer('streamRefresh');
+  const interval = 5 * 60 * 60;
+  if (!Number.isFinite(dom.video.duration) || dom.video.duration < interval) return;
+  const delay = Math.max(0, interval - dom.video.currentTime % interval) * 1000;
+  schedule('streamRefresh', async () => {
+    if (!state.videoId) return;
+    const savedTime = dom.video.currentTime;
     try {
-      const r = await fetch(`${PLAYER_API}/${endpoint}?${params}`, { signal: controller.signal });
-      const data = await r.json();
-      if (!r.ok || !data.url) throw new Error(data.error || 'No playable stream returned');
-      setVideoSource(data.url, data.video_id || videoId, data.title || '', data.subtitle_url || '');
-      return true;
-    } catch (e) {
-      if (e.name === 'AbortError') return false;
-      console.error('Video resolution failed:', e);
-      if (playlistId) skipUnplayable();
-      else showMessage('Could not play video', 'error');
-      return false;
+      const data = await playerRequest('resolve', { video_id: state.videoId });
+      dom.video.src = data.url;
+      dom.video.load();
+      dom.video.currentTime = savedTime;
+      await dom.video.play();
+      scheduleStreamRefresh();
+    } catch (error) {
+      console.error('Stream URL refresh failed:', error);
     }
-  }
+  }, delay);
+}
 
-  function playVideo(videoId) {
-    currentPlaylistName = '';
-    setNowPlayingContext(null, '');
-    return resolveAndPlay({ videoId });
-  }
+function advanceVideo() {
+  showNowPlaying('Loading next video', true);
+  return state.shuffleScope ? playQueuedShuffle() : loadNext();
+}
 
-  function loadNextFromPlaylist(playlistId) {
-    if (!playlistId) return Promise.resolve(false);
-    return resolveAndPlay({ playlistId });
-  }
-
-  function skipUnplayable() {
-    consecutiveSkips++;
-    if (consecutiveSkips > 8) {
-      showMessage('Too many unplayable videos. Check playlist.', 'error', 5000);
-      consecutiveSkips = 0;
-      playRandom();
-      return;
-    }
-    if (currentPlaylist) loadNextFromPlaylist(currentPlaylist);
-  }
-
-  function loadPlaylist(playlistId, playlistName) {
-    const knownPlaylist = findPlaylistChoice(playlistId);
-    if (knownPlaylist) {
-      currentCategoryKey = knownPlaylist.catKey;
-      if (!playlistName || playlistName === 'playlist' || playlistName === 'Submitted playlist') {
-        playlistName = knownPlaylist.name;
-      }
-    }
-    queuedShufflePlaylist = null;
-    currentPlaylist = playlistId;
-    currentPlaylistName = playlistName || 'playlist';
-    setNowPlayingContext(currentCategoryKey, currentPlaylistName);
-    consecutiveSkips = 0;
-    lastVideoId = null;
-    switchingPlaylist = true;
-    clearTimeout(skipTimer);
-
-    loadNextFromPlaylist(playlistId).then(() => {
-      switchingPlaylist = false;
-    });
-
-    return playlistName;
-  }
-
-  function renderPlaylistsForCategory(categoryKey) {
-    const container = $('#playlists');
-    if (!container) return;
-
-    const list = playlists[categoryKey] || [];
-    if (!list.length) {
-      container.innerHTML = '<p class="no-playlists">No playlists in this category</p>';
-      return;
-    }
-
-    container.innerHTML = list.map(p =>
-      `<button data-playlist="${p.id}" class="playlist-button${p.id === currentPlaylist ? ' selected' : ''}">${p.name}</button>`
-    ).join('');
-  }
-
-  function setInitialActiveStates() {
-    if (!currentCategoryKey || !currentPlaylist) return;
-
-    $(`[data-category="${currentCategoryKey}"]`)?.classList.add('selected');
-    renderPlaylistsForCategory(currentCategoryKey);
-  }
-
-  function loadPlaylistsData() {
-    const cats = window.CATEGORIES_DATA || [];
-    playlists = {};
-    categoryNames = {};
-    cats.forEach(cat => {
-      const categoryKey = cat.name.toLowerCase();
-      categoryNames[categoryKey] = cat.name;
-      playlists[categoryKey] = (cat.playlists || []).map(p => ({
-        id: p.youtube_playlist_id,
-        name: p.name
-      }));
-    });
-
-  }
-
-  function findPlaylistChoice(playlistId) {
-    for (const [catKey, list] of Object.entries(playlists)) {
-      const playlist = list.find(item => item.id === playlistId);
-      if (playlist) return { ...playlist, catKey };
-    }
-    return null;
-  }
-
-  async function startInitialPlayback() {
-    showLoadingState();
-    if (shuffleState) {
-      try {
-        const response = await fetch(`${PLAYER_API}/ready`);
-        if (response.status !== 204) {
-          const data = await response.json();
-          const choice = findPlaylistChoice(data.playlist_id);
-          if (data.url && choice) {
-            const { catKey } = choice;
-            currentCategoryKey = catKey;
-            currentPlaylist = choice.id;
-            currentPlaylistName = choice.name;
-            setNowPlayingContext(catKey, choice.name);
-            renderPlaylistsForCategory(catKey);
-            setInitialActiveStates();
-            setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
-            return;
-          }
-        }
-      } catch (error) {
-        console.warn('Warm startup unavailable:', error);
-      }
-    }
-
-    playRandom();
-  }
-
-  function chooseRandomPlaylist() {
-    const cats = Object.keys(playlists);
-    if (!cats.length) return null;
-
-    const catKey = shuffleCategory === 'all'
-      ? cats[Math.floor(Math.random() * cats.length)]
-      : shuffleCategory;
-
-    const list = playlists[catKey];
-    if (!list?.length) return null;
-
-    const alternatives = list.filter(p => p.id !== currentPlaylist);
-    const candidates = alternatives.length ? alternatives : list;
-    const playlist = candidates[Math.floor(Math.random() * candidates.length)];
-    return { ...playlist, catKey };
-  }
-
-  function playRandomChoice(choice) {
-    if (!choice) return false;
-    const { catKey, ...randomPlaylist } = choice;
-
-    $all('[data-category]').forEach(b => b.classList.remove('selected'));
-    $all('[data-playlist]').forEach(b => b.classList.remove('selected'));
-    $(`[data-category="${catKey}"]`)?.classList.add('selected');
-
-    currentCategoryKey = catKey;
-    currentPlaylist = randomPlaylist.id;
-    renderPlaylistsForCategory(catKey);
-
-    return loadPlaylist(randomPlaylist.id, randomPlaylist.name);
-  }
-
-  function playRandom() {
-    return playRandomChoice(chooseRandomPlaylist());
-  }
-
-  function queueShufflePrefetch() {
-    if (!shuffleState || queuedShufflePlaylist) return;
-    const choice = chooseRandomPlaylist();
-    if (!choice) return;
-    queuedShufflePlaylist = choice;
-    const params = new URLSearchParams({ playlist_id: choice.id });
-    if (currentVideoId) params.set('exclude', currentVideoId);
-    fetch(`${PLAYER_API}/prefetch?${params}`).catch(err => {
-      console.warn('Shuffle prefetch failed:', err);
-    });
-  }
-
-  function playQueuedShuffle() {
-    const choice = queuedShufflePlaylist;
-    queuedShufflePlaylist = null;
-    return playRandomChoice(choice || chooseRandomPlaylist());
-  }
-
-  function initMenu() {
-    const menu = $('#menu');
-    if (!menu) return;
-
-    $('.menu-button')?.addEventListener('click', () => menu.hidden = false);
-
-    menu.addEventListener('click', ev => {
-      const t = ev.target;
-      const { category, playlist, action } = t.dataset;
-      const actualAction = action || t.closest('[data-action]')?.dataset.action;
-
-      if (category && playlists[category]) {
-        $all('[data-category]').forEach(b => b.classList.remove('selected'));
-        t.classList.add('selected');
-        currentCategoryKey = category;
-        renderPlaylistsForCategory(category);
-        toggleQr(false);
-        return;
-      }
-
-      if (playlist) {
-        $all('[data-playlist]').forEach(b => b.classList.remove('selected'));
-        t.classList.add('selected');
-
-        let playlistName = 'playlist';
-        if (currentCategoryKey) {
-          const playlistObj = playlists[currentCategoryKey]?.find(p => p.id === playlist);
-          if (playlistObj) playlistName = playlistObj.name;
-        }
-
-        loadPlaylist(playlist, playlistName);
-        menu.hidden = true;
-        toggleQr(false);
-        return;
-      }
-
-      if (actualAction === 'qr') return toggleQr(true);
-      if (actualAction === 'regenerate-qr') {
-        ev.stopPropagation();
-        return regenerateQrCode();
-      }
-      if (actualAction === 'reload') return location.reload();
-      if (actualAction === 'random') {
-        const playlistName = playRandom();
-        if (!playlistName) return;
-        menu.hidden = true;
-        toggleQr(false);
-        return;
-      }
-      if (actualAction === 'shuffle') {
-        const shuffleBtn = menu.querySelector('[data-action="shuffle"]');
-
-        // Three states: off → on (all) → on (locked to category) → off
-        if (!shuffleState) {
-          shuffleState = true;
-          shuffleCategory = 'all';
-          shuffleBtn.classList.add('selected');
-          shuffleBtn.classList.remove('locked');
-          setTimeout(() => showMessage('Shuffle on', 'info', 2000), 100);
-        } else if (shuffleCategory === 'all' && currentCategoryKey) {
-          shuffleCategory = currentCategoryKey;
-          shuffleBtn.classList.add('locked');
-          setTimeout(() => showMessage(`Shuffle locked to ${currentCategoryKey}`, 'info', 2000), 100);
-        } else {
-          shuffleState = false;
-          shuffleCategory = 'all';
-          shuffleBtn.classList.remove('selected', 'locked');
-          setTimeout(() => showMessage('Shuffle off', 'info', 2000), 100);
-        }
-        queuedShufflePlaylist = null;
-        if (shuffleState && currentVideoId) queueShufflePrefetch();
-        return;
-      }
-      if (actualAction === 'screen') {
-        ev.stopPropagation();
-        document.body.className = 'screen-off';
-        menu.hidden = true;
-        return;
-      }
-      if (actualAction === 'close') menu.hidden = true;
-    });
-
-    document.body.addEventListener('click', e => {
-      if (document.body.className === 'screen-off' && !e.target.closest('.menu-button')) {
-        document.body.className = '';
-      }
-    });
-
-    setInitialActiveStates();
-  }
-
-  // Replaces loadYouTubeApi() + createPlayer(). Uses native <video> events
-  // instead of the YT Player API state machine.
-  function initVideoPlayer() {
-    const video = getVideo();
-    if (!video) return;
-
-    const overlays = ['#player-overlay-left', '#player-overlay-right', '.menu-button'];
-    document.querySelectorAll(overlays.join(',')).forEach(el => el.classList.add('overlay-highlight'));
-
-    // Mirrors YT.PlayerState.ENDED handling
-    video.addEventListener('ended', () => {
-      if (switchingPlaylist) return;
-      showNowPlaying('Loading next video', true);
-      if (shuffleState) return playQueuedShuffle();
-      loadNextFromPlaylist(currentPlaylist);
-    });
-
-    // Mirrors onError: skipUnplayable
-    video.addEventListener('error', () => {
-      if (switchingPlaylist) return;
-      hideLoadingState();
-      console.warn('Video error, skipping...', {
-        code: video.error?.code,
-        message: video.error?.message,
-        networkState: video.networkState,
-        readyState: video.readyState,
-        videoId: currentVideoId,
-      });
-      skipUnplayable();
-    });
-
-    // Mirrors the UNSTARTED skip timer — fires if video stalls for 15s
-    video.addEventListener('waiting', () => {
-      clearTimeout(skipTimer);
-      skipTimer = setTimeout(() => {
-        const v = getVideo();
-        if (v && !v.paused && v.readyState < 3) {
-          console.warn('Stalled, skipping...');
-          skipUnplayable();
-        }
-      }, 15000);
-    });
-
-    video.addEventListener('playing', () => {
-      const firstPlayback = !hasStartedCurrentVideo;
-      const resumedPlayback = resumingFromPause;
-      hasStartedCurrentVideo = true;
-      resumingFromPause = false;
-      clearTimeout(skipTimer);
-      consecutiveSkips = 0;
-      videoLoading = false;
-      hideLoadingState();
-      hideControls();
-      if (firstPlayback || resumedPlayback) {
-        showNowPlaying();
-        hideNowPlayingAfterDelay(firstPlayback ? 5000 : 2000);
-      }
-    });
-
-    video.addEventListener('pause', () => {
-      if (videoLoading) return;
-      resumingFromPause = true;
+function initVideoEvents() {
+  dom.video.addEventListener('ended', () => {
+    if (!state.switchingPlaylist) advanceVideo();
+  });
+  dom.video.addEventListener('error', () => {
+    if (state.switchingPlaylist) return;
+    endLoading();
+    console.warn('Fatal media error; skipping video', dom.video.error);
+    skipUnplayable();
+  });
+  dom.video.addEventListener('playing', () => {
+    const firstPlayback = !state.started;
+    const resumed = state.resuming;
+    state.started = true;
+    state.resuming = false;
+    state.loading = false;
+    state.errors = 0;
+    endLoading();
+    hideHud();
+    if (firstPlayback || resumed) {
       showNowPlaying();
-      showControls(true);  // persist while paused
-    });
-
-    video.addEventListener('timeupdate', updateProgress);
-
-    // Refresh stream URL before it expires for long videos (URLs last ~6h).
-    // Reschedules itself after each swap so any length video is covered.
-    video.addEventListener('loadedmetadata', () => {
-      clearTimeout(streamRefreshTimer);
-
-      const duration = video.duration;
-      setVideoDuration(duration);
-      const REFRESH_INTERVAL = 5 * 60 * 60; // re-resolve every 5h
-      if (!isFinite(duration) || duration < REFRESH_INTERVAL) return;
-
-      async function scheduleRefresh() {
-        const refreshIn = Math.max(0, REFRESH_INTERVAL - (video.currentTime % REFRESH_INTERVAL)) * 1000;
-        streamRefreshTimer = setTimeout(async () => {
-          if (!currentVideoId) return;
-          const savedTime = video.currentTime;
-          try {
-            const r = await fetch(`${PLAYER_API}/resolve?video_id=${encodeURIComponent(currentVideoId)}`);
-            const data = await r.json();
-            if (data.url) {
-              video.src = data.url;
-              video.load();
-              video.currentTime = savedTime;
-              video.play().catch(err => console.error('stream refresh play() failed:', err));
-              scheduleRefresh(); // reschedule for the next 5h window
-            }
-          } catch (e) {
-            console.error('Stream URL refresh failed:', e);
-          }
-        }, refreshIn);
-      }
-
-      scheduleRefresh();
-    });
-  }
-
-  function customVideoControls() {
-    const playerContainer = $('#player-container');
-    if (!playerContainer) return;
-
-    const multiTapDelay = 220;
-    const secondsToSkip = 20;
-
-    function createOverlay(side) {
-      const overlay = document.createElement('div');
-      overlay.id = `player-overlay-${side}`;
-      playerContainer.appendChild(overlay);
-
-      let lastTapTime = 0;
-      let tapCount = 0;
-      let resetTapTimer = null;
-      let initialPaused = false;
-
-      function restoreInitialPlayback(video) {
-        if (initialPaused && !video.paused) {
-          video.pause();
-        } else if (!initialPaused && video.paused) {
-          video.play().catch(() => {});
-        }
-      }
-
-      function resetTapStateAfterDelay() {
-        clearTimeout(resetTapTimer);
-        resetTapTimer = setTimeout(() => {
-          tapCount = 0;
-          lastTapTime = 0;
-        }, multiTapDelay);
-      }
-
-      overlay.addEventListener('pointerup', event => {
-        if (event.pointerType === 'touch') event.preventDefault();
-        if (document.body.className === 'screen-off') return;
-
-        const video = getVideo();
-        if (!video) return;
-        const now = Date.now();
-        const continuesGesture = now - lastTapTime < multiTapDelay;
-
-        if (continuesGesture) {
-          if (tapCount === 2) {
-            // Triple click: previous/next video
-            clearTimeout(resetTapTimer);
-            if (side === 'left') {
-              const prevId = videoHistory.pop();
-              prevId ? playVideo(prevId) : loadNextFromPlaylist(currentPlaylist);
-            } else {
-              if (shuffleState) {
-                playRandom();
-              } else {
-                loadNextFromPlaylist(currentPlaylist);
-              }
-            }
-            showMessage(side === 'left' ? 'Previous video' : 'Next video', 'info', 1000);
-            tapCount = 0;
-            lastTapTime = 0;
-          } else {
-            // Double click: skip forward/back 20 seconds
-            restoreInitialPlayback(video);
-            if (side === 'left') {
-              video.currentTime = Math.max(0, video.currentTime - secondsToSkip);
-              showMessage(`-${secondsToSkip}s`, 'info', 1000);
-            } else {
-              video.currentTime = Math.min(video.duration || Infinity, video.currentTime + secondsToSkip);
-              showMessage(`+${secondsToSkip}s`, 'info', 1000);
-            }
-            tapCount = 2;
-            lastTapTime = now;
-            resetTapStateAfterDelay();
-          }
-        } else {
-          // First tap: respond immediately; a second tap rolls this back before seeking.
-          initialPaused = video.paused;
-          if (initialPaused) {
-            video.play().catch(() => {});
-          } else {
-            video.pause();
-          }
-          showControls(!initialPaused);
-          tapCount = 1;
-          lastTapTime = now;
-          resetTapStateAfterDelay();
-        }
-      });
+      hideNowPlayingAfter(firstPlayback ? 5000 : 2000);
     }
+  });
+  dom.video.addEventListener('pause', () => {
+    if (state.loading) return;
+    state.resuming = true;
+    showNowPlaying();
+    showHud(true);
+  });
+  dom.video.addEventListener('timeupdate', updateProgress);
+  dom.video.addEventListener('loadedmetadata', () => {
+    setDuration(dom.video.duration);
+    scheduleStreamRefresh();
+  });
+}
 
-    createOverlay('left');
-    createOverlay('right');
+function initTapControls() {
+  const delay = 220;
+  const seekSeconds = 20;
+
+  for (const side of ['left', 'right']) {
+    const overlay = document.createElement('div');
+    overlay.id = `player-overlay-${side}`;
+    $('#player-container').appendChild(overlay);
+    let count = 0;
+    let lastTap = 0;
+    let initiallyPaused = false;
+    let resetTimer;
+
+    const resetLater = () => {
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => { count = 0; lastTap = 0; }, delay);
+    };
+    const restorePlayback = () => {
+      if (initiallyPaused && !dom.video.paused) dom.video.pause();
+      if (!initiallyPaused && dom.video.paused) dom.video.play().catch(() => {});
+    };
+
+    overlay.addEventListener('pointerup', event => {
+      if (event.pointerType === 'touch') event.preventDefault();
+      if (document.body.classList.contains('screen-off')) return;
+      const now = Date.now();
+      const continuing = now - lastTap < delay;
+
+      if (!continuing) {
+        initiallyPaused = dom.video.paused;
+        initiallyPaused ? dom.video.play().catch(() => {}) : dom.video.pause();
+        showHud(!initiallyPaused);
+        count = 1;
+        lastTap = now;
+        resetLater();
+        return;
+      }
+
+      if (count === 1) {
+        restorePlayback();
+        const delta = side === 'left' ? -seekSeconds : seekSeconds;
+        dom.video.currentTime = Math.max(0, Math.min(dom.video.duration || Infinity, dom.video.currentTime + delta));
+        showMessage(`${delta > 0 ? '+' : ''}${delta}s`, 1000);
+        count = 2;
+        lastTap = now;
+        resetLater();
+        return;
+      }
+
+      clearTimeout(resetTimer);
+      if (side === 'left') {
+        const previous = state.history.pop();
+        previous ? playVideo(previous) : loadNext();
+        showMessage('Previous video', 1000);
+      } else {
+        state.shuffleScope ? playQueuedShuffle() : loadNext();
+        showMessage('Next video', 1000);
+      }
+      count = 0;
+      lastTap = 0;
+    });
   }
 
-  async function fetchLatest() {
-    if (!deviceId) return null;
-    const r = await fetch(`/latest?device=${encodeURIComponent(deviceId)}`);
-    return r.status === 204 ? null : await r.json();
-  }
+  $$('#player-overlay-left, #player-overlay-right, .menu-button')
+    .forEach(element => element.classList.add('overlay-highlight'));
+}
 
-  async function startLatestPoller() {
-    if (pollIntervalId) return;
+async function fetchLatest() {
+  const response = await fetch(`/latest?device=${encodeURIComponent(state.deviceId)}`);
+  return response.status === 204 ? null : response.json();
+}
 
+function initRemotePoller() {
+  const poll = async (playNew = true) => {
     try {
-      const j = await fetchLatest();
-      if (j?.ts) lastTsSeen = j.ts;
+      const data = await fetchLatest();
+      if (!data?.ts || data.ts === state.latestTs) return;
+      state.latestTs = data.ts;
+      if (!playNew) return;
+      if (data.type === 'playlist') {
+        loadPlaylist(data.youtube_id, 'Submitted playlist');
+        showMessage('✓ Playlist playing!', 3000);
+      } else {
+        playVideo(data.youtube_id);
+        showMessage('✓ Video playing!', 3000);
+      }
+      toggleQr(false);
+      dom.menu.hidden = true;
     } catch (_) { }
+  };
 
-    pollIntervalId = setInterval(async () => {
-      try {
-        const j = await fetchLatest();
-        if (!j?.ts || j.ts === lastTsSeen) return;
+  poll(false).finally(() => setInterval(poll, 2500));
+}
 
-        lastTsSeen = j.ts;
+function applyQuery() {
+  const params = new URLSearchParams(location.search);
+  state.shuffleScope = params.get('shuffle') === 'true' ? SHUFFLE_ALL : null;
+  const category = params.get('category') || params.get('cat');
+  if (category) selectCategory(category);
+  updateShuffleButton();
 
-        if (j.type === 'playlist') {
-          loadPlaylist(j.youtube_id, 'Submitted playlist');
-          showMessage('✓ Playlist playing!', 'success');
-        } else {
-          playVideo(j.youtube_id);
-          showMessage('✓ Video playing!', 'success');
-        }
+  const playlist = params.get('playlist') || params.get('list');
+  const video = params.get('video') || params.get('v');
+  if (playlist) return loadPlaylist(playlist, findChoice(playlist)?.name || 'playlist');
+  if (video) return playVideo(video);
+  return startPlayback();
+}
 
-        if (qrVisible) toggleQr(false);
-        $('#menu').hidden = true;
-      } catch (_) { }
-    }, POLL_INTERVAL_MS);
-  }
+function init() {
+  cacheDom();
+  state.deviceId = ensureDeviceId();
+  if (!state.deviceId || !dom.video) return;
+  loadCatalog();
+  initMenu();
+  initScrubber();
+  initCaptions();
+  initTapControls();
+  initVideoEvents();
+  initRemotePoller();
+  applyQuery();
+}
 
-  function init() {
-    deviceId = ensureDeviceId();
-    if (!deviceId) return;
-
-    loadPlaylistsData();
-    applyQueryParams();
-    initMenu();
-    customVideoControls();
-    initVideoPlayer();
-    initProgressBar();
-    initCCButton();
-    startLatestPoller();
-  }
-
-  return { init };
-})();
-
-document.addEventListener('DOMContentLoaded', () => PiStuff.init());
-
-export default PiStuff;
+document.addEventListener('DOMContentLoaded', init);

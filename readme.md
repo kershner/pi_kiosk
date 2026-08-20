@@ -33,8 +33,7 @@ Playlist categories and YouTube playlist IDs are managed through the Django admi
 | `remote.py` | QR tokens, remote-play state, and YouTube URL parsing |
 | `catalog.py` | Remotely managed playlist catalog cache |
 | `static/js/piStuff.js` | Kiosk playback, shuffle, menu, and touch controls |
-| `static/js/submitForm.js` | Remote submission form |
-| `static/js/youtubeSearch.js` | YouTube search and result selection |
+| `static/js/submitForm.js` | Remote submission and YouTube search |
 | `static/css/pi_stuff.css` | Kiosk, menu, player, and submission styles |
 | `misc/xinitrc` | Pi display-session startup |
 | `misc/install_youtube_support.sh` | yt-dlp, Node.js, and PO-token provider setup |
