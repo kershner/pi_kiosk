@@ -30,6 +30,8 @@ const PiStuff = (() => {
   let queuedShufflePlaylist = null;
   let nowPlayingTimer = null;
   let videoLoading = false;
+  let hasStartedCurrentVideo = false;
+  let resumingFromPause = false;
 
   function getVideo() {
     return document.getElementById('video-player');
@@ -114,14 +116,14 @@ const PiStuff = (() => {
     overlay?.classList.add('visible');
   }
 
-  function hideNowPlayingAfterDelay() {
+  function hideNowPlayingAfterDelay(delay) {
     clearTimeout(nowPlayingTimer);
     nowPlayingTimer = setTimeout(() => {
       const video = getVideo();
       if (!video || !video.paused) {
         document.getElementById('now-playing')?.classList.remove('visible');
       }
-    }, 5000);
+    }, delay);
   }
 
   function showLoadingState() {
@@ -301,6 +303,8 @@ const PiStuff = (() => {
     clearTimeout(streamRefreshTimer);
     currentTitle = title;
     currentVideoId = videoId;
+    hasStartedCurrentVideo = false;
+    resumingFromPause = false;
     setVideoTitle(title);
     setVideoDuration(null);
     showNowPlaying('Starting video', true);
@@ -662,17 +666,24 @@ const PiStuff = (() => {
     });
 
     video.addEventListener('playing', () => {
+      const firstPlayback = !hasStartedCurrentVideo;
+      const resumedPlayback = resumingFromPause;
+      hasStartedCurrentVideo = true;
+      resumingFromPause = false;
       clearTimeout(skipTimer);
       consecutiveSkips = 0;
       videoLoading = false;
       hideLoadingState();
       hideControls();
-      showNowPlaying();
-      hideNowPlayingAfterDelay();
+      if (firstPlayback || resumedPlayback) {
+        showNowPlaying();
+        hideNowPlayingAfterDelay(firstPlayback ? 5000 : 2000);
+      }
     });
 
     video.addEventListener('pause', () => {
       if (videoLoading) return;
+      resumingFromPause = true;
       showNowPlaying();
       showControls(true);  // persist while paused
     });
