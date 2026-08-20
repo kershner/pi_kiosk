@@ -721,7 +721,7 @@ const PiStuff = (() => {
     const playerContainer = $('#player-container');
     if (!playerContainer) return;
 
-    const doubleClickDelay = 300;
+    const multiTapDelay = 220;
     const secondsToSkip = 20;
 
     function createOverlay(side) {
@@ -729,19 +729,40 @@ const PiStuff = (() => {
       overlay.id = `player-overlay-${side}`;
       playerContainer.appendChild(overlay);
 
-      let lastClickTime = 0;
-      let isDouble = false;
+      let lastTapTime = 0;
+      let tapCount = 0;
+      let resetTapTimer = null;
+      let initialPaused = false;
 
-      overlay.addEventListener('click', () => {
+      function restoreInitialPlayback(video) {
+        if (initialPaused && !video.paused) {
+          video.pause();
+        } else if (!initialPaused && video.paused) {
+          video.play().catch(() => {});
+        }
+      }
+
+      function resetTapStateAfterDelay() {
+        clearTimeout(resetTapTimer);
+        resetTapTimer = setTimeout(() => {
+          tapCount = 0;
+          lastTapTime = 0;
+        }, multiTapDelay);
+      }
+
+      overlay.addEventListener('pointerup', event => {
+        if (event.pointerType === 'touch') event.preventDefault();
         if (document.body.className === 'screen-off') return;
 
         const video = getVideo();
+        if (!video) return;
         const now = Date.now();
-        const timeSinceLastClick = now - lastClickTime;
+        const continuesGesture = now - lastTapTime < multiTapDelay;
 
-        if (timeSinceLastClick < doubleClickDelay) {
-          if (isDouble) {
+        if (continuesGesture) {
+          if (tapCount === 2) {
             // Triple click: previous/next video
+            clearTimeout(resetTapTimer);
             if (side === 'left') {
               const prevId = videoHistory.pop();
               prevId ? playVideo(prevId) : loadNextFromPlaylist(currentPlaylist);
@@ -753,40 +774,36 @@ const PiStuff = (() => {
               }
             }
             showMessage(side === 'left' ? 'Previous video' : 'Next video', 'info', 1000);
-            isDouble = false;
-            lastClickTime = 0;
+            tapCount = 0;
+            lastTapTime = 0;
           } else {
             // Double click: skip forward/back 20 seconds
-            if (video) {
-              if (side === 'left') {
-                video.currentTime = Math.max(0, video.currentTime - secondsToSkip);
-                showMessage(`-${secondsToSkip}s`, 'info', 1000);
-              } else {
-                video.currentTime = Math.min(video.duration || Infinity, video.currentTime + secondsToSkip);
-                showMessage(`+${secondsToSkip}s`, 'info', 1000);
-              }
+            restoreInitialPlayback(video);
+            if (side === 'left') {
+              video.currentTime = Math.max(0, video.currentTime - secondsToSkip);
+              showMessage(`-${secondsToSkip}s`, 'info', 1000);
+            } else {
+              video.currentTime = Math.min(video.duration || Infinity, video.currentTime + secondsToSkip);
+              showMessage(`+${secondsToSkip}s`, 'info', 1000);
             }
-            isDouble = true;
-            lastClickTime = now;
+            tapCount = 2;
+            lastTapTime = now;
+            resetTapStateAfterDelay();
           }
         } else {
-          // First click: start timer for play/pause
-          isDouble = false;
-          lastClickTime = now;
-
-          setTimeout(() => {
-            if (lastClickTime === now && !isDouble) {
-              if (!video) return;
-              if (video.paused) {
-                video.play();
-                showMessage('Playing', 'info', 1500);
-              } else {
-                video.pause();
-                showMessage('Paused', 'info', 1500);
-              }
-              showControls(!video.paused);  // persist if now paused, fade if playing
-            }
-          }, doubleClickDelay);
+          // First tap: respond immediately; a second tap rolls this back before seeking.
+          initialPaused = video.paused;
+          if (initialPaused) {
+            video.play().catch(() => {});
+            showMessage('Playing', 'info', 1500);
+          } else {
+            video.pause();
+            showMessage('Paused', 'info', 1500);
+          }
+          showControls(!initialPaused);
+          tapCount = 1;
+          lastTapTime = now;
+          resetTapStateAfterDelay();
         }
       });
     }

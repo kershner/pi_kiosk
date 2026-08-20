@@ -52,6 +52,7 @@ _prefetch_slot = threading.BoundedSemaphore(1)
 STREAM_URL_TTL = 18000  # 5 hours (YouTube URLs expire ~6h)
 CACHE_PATH = Path.home() / ".cache" / "pi_kiosk" / "player_cache.json"
 _cache_file_lock = threading.Lock()
+_task_context = threading.local()
 
 
 def log(msg):
@@ -111,6 +112,8 @@ def run_ytdlp(*args, timeout=45):
         "--extractor-args", "youtube:player_client=mweb",
         *args,
     ]
+    if os.name == "posix" and getattr(_task_context, "background", False):
+        cmd = ["nice", "-n", "10", *cmd]
     started = time.monotonic()
     target = args[-1] if args else "request"
     try:
@@ -251,6 +254,7 @@ def pick_and_resolve(playlist_id, exclude_id=None):
 
 def _prefetch_next(playlist_id, exclude_id=None):
     """Worker for a single bounded background prefetch."""
+    _task_context.background = True
     try:
         result = pick_and_resolve(playlist_id, exclude_id)
         with _prefetch_lock:
@@ -260,6 +264,7 @@ def _prefetch_next(playlist_id, exclude_id=None):
     except Exception as e:
         log(f"Prefetch failed for {playlist_id}: {e}")
     finally:
+        _task_context.background = False
         with _prefetch_lock:
             _prefetch_inflight.discard(playlist_id)
             event = _prefetch_events.pop(playlist_id, None)

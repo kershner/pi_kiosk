@@ -132,6 +132,8 @@ button.selected {
   height: 50%;
   z-index: 10;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #player-overlay-left  { left: 0; }
@@ -148,12 +150,13 @@ button.selected {
   height: 10em;
   background: transparent;
   border: 0;
-  z-index: 11;
+  z-index: 9999;
+  touch-action: manipulation;
 }
 
 .menu {
   position: fixed;
-  z-index: 11;
+  z-index: 10000;
   inset: 0;
   display: flex;
   justify-content: center;

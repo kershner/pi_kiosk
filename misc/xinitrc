@@ -15,7 +15,7 @@ sleep 3
 mkdir -p /home/pi/logs
 
 # YouTube PO token provider (port 4416)
-/usr/local/bin/node /home/pi/bgutil-ytdlp-pot-provider/server/build/main.js >> /home/pi/logs/pot_provider.log 2>&1 &
+nice -n 10 /usr/local/bin/node /home/pi/bgutil-ytdlp-pot-provider/server/build/main.js >> /home/pi/logs/pot_provider.log 2>&1 &
 
 echo "Waiting for PO token provider..." >> /home/pi/logs/xinitrc.log
 pot_provider_ready=0
