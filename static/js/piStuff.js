@@ -1,8 +1,6 @@
-import { DeviceManager } from './deviceManager.js';
-
 const PiStuff = (() => {
   const POLL_INTERVAL_MS = 2500;
-  const PLAYER_SERVER = 'http://localhost:8765';
+  const PLAYER_API = '/api/player';
   const CAPTIONS_STORAGE_KEY = 'pi-kiosk-captions-enabled';
   const $ = s => document.querySelector(s);
   const $all = s => document.querySelectorAll(s);
@@ -35,6 +33,21 @@ const PiStuff = (() => {
 
   function getVideo() {
     return document.getElementById('video-player');
+  }
+
+  function ensureDeviceId() {
+    let id = localStorage.getItem('pi_device_id');
+    if (!id) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      id = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem('pi_device_id', id);
+    }
+
+    const params = new URLSearchParams(location.search);
+    if (params.has('device_id')) return id;
+    params.set('device_id', id);
+    location.search = params.toString();
+    return null;
   }
 
   function applyQueryParams() {
@@ -133,11 +146,6 @@ const PiStuff = (() => {
 
   function hideLoadingState() {
     document.getElementById('now-playing')?.classList.remove('loading');
-  }
-
-  function hideMessage() {
-    const msgEl = $('#display-message');
-    if (msgEl) msgEl.classList.remove('show');
   }
 
   // ─── Video controls (progress bar + time) ────────────────────────────────────
@@ -270,7 +278,7 @@ const PiStuff = (() => {
     try {
       const formData = new URLSearchParams({ device_id: deviceId });
 
-      const response = await fetch(window.REGENERATE_QR_URL, {
+      const response = await fetch('/regenerate-qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: formData,
@@ -292,8 +300,7 @@ const PiStuff = (() => {
   }
 
   // ─── Playback ───────────────────────────────────────────────────────────────
-  // Replaces the YouTube iframe player. Instead of YT.Player, we use a native
-  // <video> element fed stream URLs from player_server.py (port 8765).
+  // Native video element fed direct stream URLs resolved by the Flask API.
 
   function setVideoSource(url, videoId, title = '', subtitleUrl = '') {
     const video = getVideo();
@@ -321,52 +328,48 @@ const PiStuff = (() => {
     if (shuffleState) queueShufflePrefetch();
   }
 
-  async function playVideo(videoId) {
+  async function resolveAndPlay({ videoId = null, playlistId = null }) {
     cancelLoad();
-    currentPlaylistName = '';
-    setNowPlayingContext(null, '');
     const controller = new AbortController();
     loadAbortController = controller;
     showLoadingState();
+
+    const params = new URLSearchParams();
+    let endpoint;
+    if (videoId) {
+      endpoint = 'resolve';
+      params.set('video_id', videoId);
+    } else {
+      endpoint = 'next';
+      params.set('playlist_id', playlistId);
+      if (lastVideoId) params.set('exclude', lastVideoId);
+      if (shuffleState) params.set('prefetch', '0');
+    }
+
     try {
-      const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`, { signal: controller.signal });
+      const r = await fetch(`${PLAYER_API}/${endpoint}?${params}`, { signal: controller.signal });
       const data = await r.json();
-      if (data.url) {
-        setVideoSource(data.url, videoId, data.title || '', data.subtitle_url || '');
-      } else {
-        showMessage('Could not play video', 'error');
-      }
+      if (!r.ok || !data.url) throw new Error(data.error || 'No playable stream returned');
+      setVideoSource(data.url, data.video_id || videoId, data.title || '', data.subtitle_url || '');
+      return true;
     } catch (e) {
-      if (e.name === 'AbortError') return;
-      console.error('playVideo error:', e);
-      showMessage('Player server not reachable', 'error');
+      if (e.name === 'AbortError') return false;
+      console.error('Video resolution failed:', e);
+      if (playlistId) skipUnplayable();
+      else showMessage('Could not play video', 'error');
+      return false;
     }
   }
 
-  async function loadNextFromPlaylist(playlistId) {
-    if (!playlistId) return;
-    cancelLoad();
-    const controller = new AbortController();
-    loadAbortController = controller;
-    showLoadingState();
-    try {
-      const params = new URLSearchParams({ playlist_id: playlistId });
-      if (lastVideoId) params.set('exclude', lastVideoId);
-      if (shuffleState) params.set('prefetch', '0');
+  function playVideo(videoId) {
+    currentPlaylistName = '';
+    setNowPlayingContext(null, '');
+    return resolveAndPlay({ videoId });
+  }
 
-      const r = await fetch(`${PLAYER_SERVER}/next?${params}`, { signal: controller.signal });
-      const data = await r.json();
-
-      if (data.url) {
-        setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
-      } else {
-        skipUnplayable();
-      }
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-      console.error('loadNextFromPlaylist error:', e);
-      skipUnplayable();
-    }
+  function loadNextFromPlaylist(playlistId) {
+    if (!playlistId) return Promise.resolve(false);
+    return resolveAndPlay({ playlistId });
   }
 
   function skipUnplayable() {
@@ -453,7 +456,7 @@ const PiStuff = (() => {
     showLoadingState();
     if (shuffleState) {
       try {
-        const response = await fetch(`${PLAYER_SERVER}/ready`);
+        const response = await fetch(`${PLAYER_API}/ready`);
         if (response.status !== 204) {
           const data = await response.json();
           const choice = findPlaylistChoice(data.playlist_id);
@@ -520,7 +523,7 @@ const PiStuff = (() => {
     queuedShufflePlaylist = choice;
     const params = new URLSearchParams({ playlist_id: choice.id });
     if (currentVideoId) params.set('exclude', currentVideoId);
-    fetch(`${PLAYER_SERVER}/prefetch?${params}`).catch(err => {
+    fetch(`${PLAYER_API}/prefetch?${params}`).catch(err => {
       console.warn('Shuffle prefetch failed:', err);
     });
   }
@@ -706,7 +709,7 @@ const PiStuff = (() => {
           if (!currentVideoId) return;
           const savedTime = video.currentTime;
           try {
-            const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(currentVideoId)}`);
+            const r = await fetch(`${PLAYER_API}/resolve?video_id=${encodeURIComponent(currentVideoId)}`);
             const data = await r.json();
             if (data.url) {
               video.src = data.url;
@@ -820,7 +823,7 @@ const PiStuff = (() => {
 
   async function fetchLatest() {
     if (!deviceId) return null;
-    const r = await fetch(`${window.LATEST_URL || '/latest'}?device=${encodeURIComponent(deviceId)}`);
+    const r = await fetch(`/latest?device=${encodeURIComponent(deviceId)}`);
     return r.status === 204 ? null : await r.json();
   }
 
@@ -854,7 +857,7 @@ const PiStuff = (() => {
   }
 
   function init() {
-    deviceId = DeviceManager.ensureDeviceIdInUrl();
+    deviceId = ensureDeviceId();
     if (!deviceId) return;
 
     loadPlaylistsData();

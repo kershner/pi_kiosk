@@ -1,22 +1,24 @@
 from flask import Flask, request, jsonify, render_template, Response
 from config import FLASK_PORT, YOUTUBE_BASE_API_URL, YOUTUBE_API_KEY, SEARCH_CACHE_TTL
-from utils import (
+from remote import (
     get_or_create_qr_code, invalidate_qr_cache,
     extract_youtube_id,
     validate_token,
     set_latest_play, get_latest_play,
-    get_categories, start_categories_refresh_thread,
-    _search_cache,
     get_local_ip,
 )
+from catalog import get_categories, start_categories_refresh_thread
 from html import unescape
 import requests as http
 import logging
 import json
 import time
+import resolver
 
 app = Flask(__name__)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 logging.basicConfig(level=logging.INFO, format='[pi_server] %(message)s')
+_search_cache = {}
 
 MWEB_USER_AGENT = (
     'Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) '
@@ -53,9 +55,6 @@ def home():
         categories=categories,
         categories_json=json.dumps(categories),
         qr_code_b64=qr_code_b64,
-        api_play_url='/api/play',
-        latest_url='/latest',
-        regenerate_qr_url='/regenerate-qr',
     )
 
 
@@ -66,8 +65,6 @@ def submit_form():
         'submit.html',
         token=request.args.get('token', ''),
         device_id=request.args.get('device_id', ''),
-        api_play_url='/api/play',
-        youtube_search_url='/api/youtube-search',
     )
 
 
@@ -214,7 +211,62 @@ def youtube_search():
         return render_template(template, videos=[], playlists=[], error='Search timed out. Please try again.')
     except Exception as e:
         return render_template(template, videos=[], playlists=[], error=f'Search failed: {str(e)}')
-    
+
+
+# ─── Native player API ────────────────────────────────────────────────────────
+
+@app.route('/api/player/next')
+def player_next():
+    playlist_id = request.args.get('playlist_id')
+    if not playlist_id:
+        return jsonify({'error': 'missing playlist_id'}), 400
+
+    exclude_id = request.args.get('exclude')
+    should_prefetch = request.args.get('prefetch', '1') != '0'
+    try:
+        result = resolver.get_prefetched(playlist_id) or resolver.wait_for_prefetch(playlist_id)
+        if not result:
+            result = resolver.pick_and_resolve(playlist_id, exclude_id)
+        if should_prefetch:
+            resolver.schedule_prefetch(playlist_id, result['video_id'])
+        return jsonify(result)
+    except Exception as e:
+        app.logger.warning('Could not resolve next playlist video: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/player/prefetch')
+def player_prefetch():
+    playlist_id = request.args.get('playlist_id')
+    if not playlist_id:
+        return jsonify({'error': 'missing playlist_id'}), 400
+    scheduled = resolver.schedule_prefetch(playlist_id, request.args.get('exclude'))
+    return jsonify({'ok': True, 'scheduled': scheduled})
+
+
+@app.route('/api/player/ready')
+def player_ready():
+    result = resolver.get_any_prefetched()
+    return (jsonify(result), 200) if result else ('', 204)
+
+
+@app.route('/api/player/resolve')
+def player_resolve():
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({'error': 'missing video_id'}), 400
+    try:
+        url, title, subtitle_url = resolver.resolve_stream_url(video_id)
+        return jsonify({
+            'url': url,
+            'video_id': video_id,
+            'title': title,
+            'subtitle_url': subtitle_url,
+        })
+    except Exception as e:
+        app.logger.warning('Could not resolve video %s: %s', video_id, e)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/proxy-subtitle')
 def proxy_subtitle():
@@ -243,5 +295,6 @@ def ping():
 # ─── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
+    resolver.initialize()
     start_categories_refresh_thread()
     app.run(host='0.0.0.0', port=FLASK_PORT, debug=False, threaded=True)

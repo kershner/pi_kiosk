@@ -43,12 +43,10 @@
 {% endblock %}
 
 {% block window_vars %}
-  window.API_PLAY_URL = "{{ api_play_url }}";
   window.SUBMIT_TOKEN = "{{ token }}";
   window.SUBMIT_DEVICE_ID = "{{ device_id }}";
-  window.YOUTUBE_SEARCH_URL = "{{ youtube_search_url }}";
 {% endblock %}
 
 {% block page_script %}
-  <script type="module" src="/static/js/submitForm.js"></script>
+  <script type="module" src="{{ url_for('static', filename='js/submitForm.js') }}"></script>
 {% endblock %}

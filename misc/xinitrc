@@ -7,7 +7,6 @@ xset -dpms
 
 # ─── Start backend servers ────────────────────────────────────────────────────
 
-pkill -f "venv/bin/python3 /home/pi/pi_kiosk/player_server.py" 2>/dev/null
 pkill -f "venv/bin/python3 /home/pi/pi_kiosk/app.py" 2>/dev/null
 pkill -f "/home/pi/bgutil-ytdlp-pot-provider/server/build/main.js" 2>/dev/null
 sleep 3
@@ -31,12 +30,14 @@ if [ "$pot_provider_ready" -ne 1 ]; then
   echo "PO token provider failed to start; see pot_provider.log" >> /home/pi/logs/xinitrc.log
 fi
 
-# yt-dlp stream resolver (port 8765)
-/home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/player_server.py >> /home/pi/logs/player_server.log 2>&1 &
-
-# Flask server (port 5020)
-YOUTUBE_API_KEY=api_key_here \
-  /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
+# Flask UI and yt-dlp resolver (port 5020)
+KIOSK_ENV_FILE=/home/pi/.config/pi-kiosk.env
+if [ -r "$KIOSK_ENV_FILE" ]; then
+  set -a
+  . "$KIOSK_ENV_FILE"
+  set +a
+fi
+/home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
 
 # Wait until Flask is accepting connections before launching the browser
 echo "Waiting for Flask..." >> /home/pi/logs/xinitrc.log

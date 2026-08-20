@@ -75,11 +75,8 @@
 
 {% block window_vars %}
   window.CATEGORIES_DATA = {{ categories_json|safe }};
-  window.API_PLAY_URL = "{{ api_play_url }}";
-  window.LATEST_URL = "{{ latest_url }}";
-  window.REGENERATE_QR_URL = "{{ regenerate_qr_url }}";
 {% endblock %}
 
 {% block page_script %}
-  <script type="module" src="/static/js/piStuff.js?v=20260819-4"></script>
+  <script type="module" src="{{ url_for('static', filename='js/piStuff.js') }}"></script>
 {% endblock %}

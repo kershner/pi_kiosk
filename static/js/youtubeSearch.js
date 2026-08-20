@@ -1,19 +1,13 @@
 export const YouTubeSearch = (() => {
-  let cache = new Map();
   let selectedIndex = -1;
 
-  // Server-side search endpoint - pulled from Django
-  const SEARCH_ENDPOINT = window.YOUTUBE_SEARCH_URL;
+  const SEARCH_ENDPOINT = '/api/youtube-search';
   
   function isYouTubeUrl(str) {
     return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)/.test(str);
   }
 
   async function searchVideos(query) {
-    if (cache.has(query)) {
-      return cache.get(query);
-    }
-
     try {
       const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(query)}`);
       
@@ -22,9 +16,7 @@ export const YouTubeSearch = (() => {
         return '<div class="search-error">Search failed. Please try again.</div>';
       }
       
-      const html = await response.text();
-      cache.set(query, html);
-      return html;
+      return await response.text();
       
     } catch (error) {
       console.error('Search failed:', error);
@@ -32,22 +24,22 @@ export const YouTubeSearch = (() => {
     }
   }
 
+  function selectResult(item, input) {
+    const id = item.dataset.type === 'playlist' ? item.dataset.playlistId : item.dataset.videoId;
+    input.value = item.dataset.type === 'playlist'
+      ? `https://www.youtube.com/playlist?list=${id}`
+      : `https://www.youtube.com/watch?v=${id}`;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   function renderResults(html, container, input) {
     selectedIndex = -1;
 
-    // Wrap results in a styled container
-    const hasResults = !html.includes('search-error') && !html.includes('search-no-results');
-    const wrappedHtml = hasResults 
-      ? `<div class="search-results">${html}</div>`
-      : `<div class="search-results">${html}</div>`;
-    
-    container.innerHTML = wrappedHtml;
+    container.innerHTML = `<div class="search-results">${html}</div>`;
     container.classList.remove('hidden');
 
     // Get all result items from the rendered HTML
     const items = container.querySelectorAll('.search-result-item');
-    // const results = Array.from(items);
-
     if (items.length === 0) {
       return;
     }
@@ -56,20 +48,7 @@ export const YouTubeSearch = (() => {
     items.forEach((item, index) => {
       item.dataset.index = index;
       
-      item.addEventListener('click', () => {
-        const type = item.dataset.type;
-        
-        if (type === 'video') {
-          const videoId = item.dataset.videoId;
-          input.value = `https://www.youtube.com/watch?v=${videoId}`;
-        } else if (type === 'playlist') {
-          const playlistId = item.dataset.playlistId;
-          input.value = `https://www.youtube.com/playlist?list=${playlistId}`;
-        }
-        
-        // Trigger change event so form knows the value updated
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      item.addEventListener('click', () => selectResult(item, input));
     });
   }
 
@@ -88,18 +67,7 @@ export const YouTubeSearch = (() => {
       updateSelection(items);
     } else if (e.key === 'Enter' && selectedIndex >= 0) {
       e.preventDefault();
-      const item = items[selectedIndex];
-      const type = item.dataset.type;
-      
-      if (type === 'video') {
-        const videoId = item.dataset.videoId;
-        input.value = `https://www.youtube.com/watch?v=${videoId}`;
-      } else if (type === 'playlist') {
-        const playlistId = item.dataset.playlistId;
-        input.value = `https://www.youtube.com/playlist?list=${playlistId}`;
-      }
-      
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      selectResult(items[selectedIndex], input);
     } else if (e.key === 'Escape') {
       dropdown.classList.add('hidden');
       selectedIndex = -1;

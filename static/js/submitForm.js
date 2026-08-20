@@ -40,7 +40,7 @@ export const SubmitForm = (() => {
       
       try {
         const data = new URLSearchParams(new FormData(e.target));
-        const r = await fetch(window.API_PLAY_URL, { method: 'POST', body: data });
+        const r = await fetch('/api/play', { method: 'POST', body: data });
         const json = await r.json();
         
         if (r.ok) {
