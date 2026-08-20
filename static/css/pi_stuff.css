@@ -99,7 +99,10 @@ button.selected { background: #fff !important; color: #000 !important; }
 
 #paused-controls {
   position: absolute;
-  inset: 0;
+  top: 55%;
+  right: 0;
+  bottom: 8rem;
+  left: 0;
   z-index: 11;
   display: flex;
   align-items: center;
@@ -109,8 +112,10 @@ button.selected { background: #fff !important; color: #000 !important; }
 }
 
 #paused-controls button {
-  min-width: clamp(9rem, 20vw, 14rem);
-  min-height: 6rem;
+  flex: 1 1 0;
+  max-width: 14rem;
+  min-width: 0;
+  min-height: clamp(3.5rem, 12vh, 6rem);
   padding: 1.25rem;
   border: 0.125rem solid rgba(255, 255, 255, 0.72);
   border-radius: 0.45rem;
@@ -227,6 +232,10 @@ button.selected { background: #fff !important; color: #000 !important; }
 
 body.screen-off { background: #000; }
 body.screen-off #video-player { visibility: hidden; }
+body.screen-off #loading-indicator,
+body.screen-off #now-playing,
+body.screen-off #paused-controls,
+body.screen-off #video-hud { visibility: hidden; }
 body.screen-off::before {
   position: fixed;
   inset: 0;
@@ -284,7 +293,9 @@ body.screen-off::before {
   top: 1.25rem;
   right: 7.5rem;
   z-index: 14;
+  max-height: calc(55% - 2.5rem);
   padding: 1.2rem 1.5rem 1.35rem;
+  overflow: hidden;
   transform: translateY(0.75rem);
   transition: opacity 0.6s ease, transform 0.6s ease;
 }
@@ -294,6 +305,8 @@ body.screen-off::before {
   opacity: 1;
   transform: translateY(0);
 }
+
+#now-playing.hide-immediately { transition: none; }
 
 #now-playing-status {
   display: block;

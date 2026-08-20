@@ -106,13 +106,13 @@ function formatTime(seconds) {
 }
 
 function showMessage(text, duration = 2000) {
-  if (!dom.message || text === 'Playing' || text === 'Paused') return;
+  if (!dom.message) return;
   dom.message.textContent = text;
   dom.message.className = 'display-message show';
   schedule('message', () => dom.message.classList.remove('show'), duration);
 }
 
-function showNowPlaying(status = '') {
+function showNowPlaying(status) {
   clearTimer('nowPlaying');
   dom.status.textContent = status;
   dom.status.hidden = !status;
@@ -123,6 +123,13 @@ function hideNowPlayingAfter(delay) {
   schedule('nowPlaying', () => {
     if (!dom.video.paused) dom.nowPlaying.classList.remove('visible');
   }, delay);
+}
+
+function hideNowPlayingImmediately() {
+  clearTimer('nowPlaying');
+  dom.nowPlaying.classList.add('hide-immediately');
+  dom.nowPlaying.classList.remove('visible');
+  requestAnimationFrame(() => dom.nowPlaying.classList.remove('hide-immediately'));
 }
 
 function setContext(category = state.category, playlistName = state.playlistName) {
@@ -144,6 +151,12 @@ function setPlaybackState(label) {
   dom.playbackState.textContent = label;
 }
 
+function setPausedUi(paused) {
+  setPlaybackState(paused ? 'Paused' : 'Playing');
+  dom.pausedControls.hidden = !paused;
+  dom.hud.classList.toggle('visible', paused);
+}
+
 function beginLoading(message = 'Preparing video…') {
   state.loading = true;
   dom.loadingIndicator.hidden = false;
@@ -159,12 +172,11 @@ function endLoading() {
   dom.loadingIndicator.hidden = true;
 }
 
-function showHud() {
-  dom.hud.classList.add('visible');
-}
-
-function hideHud() {
-  dom.hud.classList.remove('visible');
+function failLoading(status) {
+  endLoading();
+  setPausedUi(dom.video.paused);
+  dom.title.textContent = state.title;
+  showNowPlaying(status);
 }
 
 function updateProgress() {
@@ -281,7 +293,15 @@ function setVideoSource(data) {
 
   dom.video.src = data.url;
   dom.video.load();
-  dom.video.play().catch(error => console.error('play() failed:', error));
+  dom.video.play().catch(error => {
+    if (error.name === 'AbortError') return;
+    console.error('play() failed:', error);
+    if (error.name === 'NotAllowedError') {
+      endLoading();
+      setPausedUi(true);
+      showNowPlaying('Paused');
+    }
+  });
 
   if (data.video_id) {
     state.lastVideoId = data.video_id;
@@ -319,10 +339,8 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
     console.error('Video resolution failed:', error);
     if (playlistId) skipUnplayable();
     else {
-      endLoading();
-      dom.title.textContent = state.title;
-      showNowPlaying('Unable to play video');
-      hideNowPlayingAfter(3000);
+      failLoading('Unable to play video');
+      schedule('nowPlaying', () => dom.nowPlaying.classList.remove('visible'), 3000);
       showMessage('Could not play video', 3000);
     }
     return false;
@@ -347,7 +365,9 @@ function skipUnplayable() {
   if (state.errors <= 8) return loadNext();
   state.errors = 0;
   showMessage('Too many unplayable videos. Check playlist.', 5000);
-  return playRandom();
+  const fallback = playRandom();
+  if (!fallback) failLoading('No playable videos');
+  return fallback;
 }
 
 function findChoice(playlistId) {
@@ -453,7 +473,7 @@ async function startPlayback() {
       console.warn('Warm startup unavailable:', error);
     }
   }
-  playRandom();
+  if (!playRandom()) failLoading('No videos available');
 }
 
 function updateShuffleButton() {
@@ -541,35 +561,32 @@ function advanceVideo() {
 
 function initVideoEvents() {
   dom.video.addEventListener('ended', () => {
-    if (!state.switchingPlaylist) advanceVideo();
+    if (!state.switchingPlaylist && !state.loading) advanceVideo();
   });
   dom.video.addEventListener('error', () => {
-    if (state.switchingPlaylist) return;
+    if (state.switchingPlaylist || state.request) return;
     console.warn('Fatal media error; skipping video', dom.video.error);
     skipUnplayable();
   });
   dom.video.addEventListener('playing', () => {
+    if (state.loading && state.request) return;
     const firstPlayback = !state.started;
     const resumed = state.resuming;
     state.started = true;
     state.resuming = false;
     state.errors = 0;
     endLoading();
-    setPlaybackState('Playing');
-    dom.pausedControls.hidden = true;
-    hideHud();
-    if (firstPlayback || resumed) {
+    setPausedUi(false);
+    if (firstPlayback) {
       showNowPlaying('Playing');
-      hideNowPlayingAfter(firstPlayback ? 5000 : 2000);
-    }
+      hideNowPlayingAfter(5000);
+    } else if (resumed) hideNowPlayingImmediately();
   });
   dom.video.addEventListener('pause', () => {
     if (state.loading) return;
     state.resuming = true;
-    setPlaybackState('Paused');
-    dom.pausedControls.hidden = false;
+    setPausedUi(true);
     showNowPlaying('Paused');
-    showHud();
   });
   dom.video.addEventListener('timeupdate', updateProgress);
   dom.video.addEventListener('loadedmetadata', () => {
@@ -595,12 +612,14 @@ function initPlaybackControls() {
 
   dom.pausedControls.addEventListener('click', event => {
     const button = event.target.closest('[data-paused-action]');
-    if (!button) {
+    if (!button) return;
+
+    const action = button.dataset.pausedAction;
+    if (action === 'play') {
       dom.video.play().catch(() => {});
       return;
     }
 
-    const action = button.dataset.pausedAction;
     if (action === 'back' || action === 'forward') {
       const delta = action === 'back' ? -seekSeconds : seekSeconds;
       const duration = Number.isFinite(dom.video.duration) ? dom.video.duration : Infinity;
@@ -611,8 +630,12 @@ function initPlaybackControls() {
     }
 
     if (action === 'next') {
-      state.shuffleScope ? playQueuedShuffle() : loadNext();
-      showMessage('Next video', 1000);
+      if (!state.shuffleScope && !state.playlistId) {
+        showMessage('No next video', 2000);
+        return;
+      }
+      const next = advanceVideo();
+      showMessage(next ? 'Next video' : 'No next video', next ? 1000 : 2000);
     }
   });
 

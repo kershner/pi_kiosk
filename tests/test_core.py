@@ -94,6 +94,7 @@ class PlayerApiTests(unittest.TestCase):
         self.assertIn(b'id="loading-indicator"', home.data)
         self.assertIn(b'id="playback-state"', home.data)
         self.assertIn(b'id="paused-controls"', home.data)
+        self.assertIn(b'data-paused-action="play"', home.data)
         self.assertNotIn(b"API_PLAY_URL", home.data)
         self.assertEqual(submit.status_code, 200)
         self.assertIn(b"/static/js/submitForm.js", submit.data)
