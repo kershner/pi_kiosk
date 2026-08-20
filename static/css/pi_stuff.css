@@ -320,8 +320,8 @@ body.screen-off::before {
    ============================================================================= */
 #now-playing {
   position: absolute;
-  left: 1.5rem;
-  right: 1.5rem;
+  left: 2.25rem;
+  right: 2.25rem;
   bottom: 8rem;
   z-index: 14;
   padding: 1.2rem 1.5rem 1.35rem;
@@ -333,6 +333,7 @@ body.screen-off::before {
   transform: translateY(0.75rem);
   transition: opacity 0.6s ease, transform 0.6s ease;
   pointer-events: none;
+  box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.28);
 }
 
 #now-playing.visible {
@@ -350,6 +351,19 @@ body.screen-off::before {
   text-transform: uppercase;
 }
 
+#now-playing.loading #now-playing-status::after {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: bottom;
+  content: '...';
+  animation: now-playing-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes now-playing-dots {
+  to { width: 1.25em; }
+}
+
 #now-playing-meta {
   display: flex;
   align-items: center;
@@ -358,10 +372,14 @@ body.screen-off::before {
 }
 
 #now-playing-context {
+  min-width: 0;
+  overflow: hidden;
   color: rgba(255, 255, 255, 0.82);
   font-size: clamp(0.85rem, 1.8vw, 1.1rem);
   font-weight: 600;
   letter-spacing: 0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #now-playing-duration {
@@ -376,12 +394,16 @@ body.screen-off::before {
 }
 
 #now-playing-title {
+  display: -webkit-box;
   max-width: 94%;
+  overflow: hidden;
   font-size: clamp(2rem, 5vw, 3.75rem);
   font-weight: 800;
   line-height: 1.08;
   text-wrap: balance;
   text-shadow: 0 0.1rem 0.35rem rgba(0, 0, 0, 0.75);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 /* =============================================================================
@@ -740,38 +762,4 @@ body.screen-off::before {
   border-radius: 0.1875em;
   margin-right: 0.25em;
   font-weight: normal;
-}
-
-/* =============================================================================
-   LOADING SPINNER
-   ============================================================================= */
-#loading-spinner {
-  position: absolute;
-  top: 1.25rem;
-  right: 1.25rem;
-  width: 3rem;
-  height: 3rem;
-  border-radius: 50%;
-  z-index: 20;
-  display: none;
-  align-items: center;
-  justify-content: center;
-}
-
-#loading-spinner:not([hidden]) {
-  display: flex;
-}
-
-#loading-spinner::after {
-  content: '';
-  width: 2.5rem;
-  height: 2.5rem;
-  border: 0.3rem solid rgba(255, 255, 255, 0.25);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }

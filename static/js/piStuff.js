@@ -3,6 +3,7 @@ import { DeviceManager } from './deviceManager.js';
 const PiStuff = (() => {
   const POLL_INTERVAL_MS = 2500;
   const PLAYER_SERVER = 'http://localhost:8765';
+  const CAPTIONS_STORAGE_KEY = 'pi-kiosk-captions-enabled';
   const $ = s => document.querySelector(s);
   const $all = s => document.querySelectorAll(s);
 
@@ -25,7 +26,7 @@ const PiStuff = (() => {
   let currentVideoId = null;
   let controlsTimer = null;
   let loadAbortController = null;
-  let captionsEnabled = true;
+  let captionsEnabled = localStorage.getItem(CAPTIONS_STORAGE_KEY) !== 'false';
   let queuedShufflePlaylist = null;
   let nowPlayingTimer = null;
   let videoLoading = false;
@@ -100,11 +101,12 @@ const PiStuff = (() => {
     context.hidden = !text;
   }
 
-  function showNowPlaying(status = 'Now playing') {
+  function showNowPlaying(status = 'Now playing', loading = false) {
     clearTimeout(nowPlayingTimer);
     const overlay = document.getElementById('now-playing');
     const statusEl = document.getElementById('now-playing-status');
     if (statusEl) statusEl.textContent = status;
+    overlay?.classList.toggle('loading', loading);
     overlay?.classList.add('visible');
   }
 
@@ -118,16 +120,13 @@ const PiStuff = (() => {
     }, 5000);
   }
 
-  function showSpinner() {
-    const el = document.getElementById('loading-spinner');
-    if (el) el.hidden = false;
+  function showLoadingState() {
     videoLoading = true;
-    showNowPlaying(currentTitle ? 'Loading next video…' : 'Loading video…');
+    showNowPlaying(currentTitle ? 'Loading next video' : 'Loading video', true);
   }
 
-  function hideSpinner() {
-    const el = document.getElementById('loading-spinner');
-    if (el) el.hidden = true;
+  function hideLoadingState() {
+    document.getElementById('now-playing')?.classList.remove('loading');
   }
 
   function hideMessage() {
@@ -229,6 +228,7 @@ const PiStuff = (() => {
       e.stopPropagation();
       const video = getVideo();
       captionsEnabled = !captionsEnabled;
+      localStorage.setItem(CAPTIONS_STORAGE_KEY, String(captionsEnabled));
       btn.classList.toggle('active', captionsEnabled);
       const subtitleUrl = video?.dataset.subtitleUrl || '';
       const existing = document.getElementById('subtitle-track');
@@ -299,7 +299,7 @@ const PiStuff = (() => {
     currentVideoId = videoId;
     setVideoTitle(title);
     setVideoDuration(null);
-    showNowPlaying('Starting video…');
+    showNowPlaying('Starting video', true);
     setSubtitleTrack(subtitleUrl);
     video.src = url;
     video.load();
@@ -319,7 +319,7 @@ const PiStuff = (() => {
     setNowPlayingContext(null, '');
     const controller = new AbortController();
     loadAbortController = controller;
-    showSpinner();
+    showLoadingState();
     try {
       const r = await fetch(`${PLAYER_SERVER}/resolve-video?video_id=${encodeURIComponent(videoId)}`, { signal: controller.signal });
       const data = await r.json();
@@ -340,7 +340,7 @@ const PiStuff = (() => {
     cancelLoad();
     const controller = new AbortController();
     loadAbortController = controller;
-    showSpinner();
+    showLoadingState();
     try {
       const params = new URLSearchParams({ playlist_id: playlistId });
       if (lastVideoId) params.set('exclude', lastVideoId);
@@ -442,7 +442,7 @@ const PiStuff = (() => {
   }
 
   async function startInitialPlayback() {
-    showSpinner();
+    showLoadingState();
     if (shuffleState) {
       try {
         const response = await fetch(`${PLAYER_SERVER}/ready`);
@@ -633,7 +633,7 @@ const PiStuff = (() => {
     // Mirrors YT.PlayerState.ENDED handling
     video.addEventListener('ended', () => {
       if (switchingPlaylist) return;
-      showNowPlaying('Loading next video…');
+      showNowPlaying('Loading next video', true);
       if (shuffleState) return playQueuedShuffle();
       loadNextFromPlaylist(currentPlaylist);
     });
@@ -641,7 +641,7 @@ const PiStuff = (() => {
     // Mirrors onError: skipUnplayable
     video.addEventListener('error', () => {
       if (switchingPlaylist) return;
-      hideSpinner();
+      hideLoadingState();
       console.warn('Video error, skipping...', {
         code: video.error?.code,
         message: video.error?.message,
@@ -668,7 +668,7 @@ const PiStuff = (() => {
       clearTimeout(skipTimer);
       consecutiveSkips = 0;
       videoLoading = false;
-      hideSpinner();
+      hideLoadingState();
       hideControls();
       showNowPlaying('Now playing');
       hideNowPlayingAfterDelay();
