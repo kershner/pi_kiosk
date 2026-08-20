@@ -350,6 +350,14 @@ body.screen-off::before {
   text-transform: uppercase;
 }
 
+#now-playing-context {
+  margin-bottom: 0.35rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(0.85rem, 1.8vw, 1.1rem);
+  font-weight: 600;
+  letter-spacing: 0.025em;
+}
+
 #now-playing-title {
   max-width: 90%;
   font-size: clamp(1.6rem, 4vw, 3rem);

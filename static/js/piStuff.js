@@ -13,7 +13,9 @@ const PiStuff = (() => {
   let shuffleState = false;
   let shuffleCategory = 'all';
   let playlists = {};
+  let categoryNames = {};
   let currentCategoryKey = null;
+  let currentPlaylistName = '';
   let qrVisible = false;
   let switchingPlaylist = false;
   let videoHistory = [];
@@ -48,9 +50,13 @@ const PiStuff = (() => {
 
     if (playlist) {
       let name = 'playlist';
-      for (const cat of Object.values(playlists)) {
+      for (const [catKey, cat] of Object.entries(playlists)) {
         const pl = cat.find(x => x.id === playlist);
-        if (pl) { name = pl.name; break; }
+        if (pl) {
+          name = pl.name;
+          currentCategoryKey = catKey;
+          break;
+        }
       }
       currentPlaylist = playlist;
       loadPlaylist(playlist, name);
@@ -77,6 +83,15 @@ const PiStuff = (() => {
     const largeTitle = document.getElementById('now-playing-title');
     if (hudTitle) hudTitle.textContent = title;
     if (largeTitle) largeTitle.textContent = title;
+  }
+
+  function setNowPlayingContext(categoryKey, playlistName) {
+    const context = document.getElementById('now-playing-context');
+    if (!context) return;
+    const categoryName = categoryKey ? (categoryNames[categoryKey] || categoryKey) : '';
+    const text = [categoryName, playlistName].filter(Boolean).join('  •  ');
+    context.textContent = text;
+    context.hidden = !text;
   }
 
   function showNowPlaying(status = 'Now playing') {
@@ -300,6 +315,8 @@ const PiStuff = (() => {
 
   async function playVideo(videoId) {
     cancelLoad();
+    currentPlaylistName = '';
+    setNowPlayingContext(null, '');
     const controller = new AbortController();
     loadAbortController = controller;
     showSpinner();
@@ -356,8 +373,17 @@ const PiStuff = (() => {
   }
 
   function loadPlaylist(playlistId, playlistName) {
+    const knownPlaylist = findPlaylistChoice(playlistId);
+    if (knownPlaylist) {
+      currentCategoryKey = knownPlaylist.catKey;
+      if (!playlistName || playlistName === 'playlist' || playlistName === 'Submitted playlist') {
+        playlistName = knownPlaylist.name;
+      }
+    }
     queuedShufflePlaylist = null;
     currentPlaylist = playlistId;
+    currentPlaylistName = playlistName || 'playlist';
+    setNowPlayingContext(currentCategoryKey, currentPlaylistName);
     consecutiveSkips = 0;
     lastVideoId = null;
     switchingPlaylist = true;
@@ -395,8 +421,11 @@ const PiStuff = (() => {
   function loadPlaylistsData() {
     const cats = window.CATEGORIES_DATA || [];
     playlists = {};
+    categoryNames = {};
     cats.forEach(cat => {
-      playlists[cat.name.toLowerCase()] = (cat.playlists || []).map(p => ({
+      const categoryKey = cat.name.toLowerCase();
+      categoryNames[categoryKey] = cat.name;
+      playlists[categoryKey] = (cat.playlists || []).map(p => ({
         id: p.youtube_playlist_id,
         name: p.name
       }));
@@ -424,6 +453,8 @@ const PiStuff = (() => {
             const { catKey } = choice;
             currentCategoryKey = catKey;
             currentPlaylist = choice.id;
+            currentPlaylistName = choice.name;
+            setNowPlayingContext(catKey, choice.name);
             renderPlaylistsForCategory(catKey);
             setInitialActiveStates();
             setVideoSource(data.url, data.video_id, data.title || '', data.subtitle_url || '');
