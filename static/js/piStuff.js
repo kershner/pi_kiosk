@@ -71,6 +71,7 @@ const PiStuff = (() => {
   }
 
   function showMessage(text, type = 'info', duration = 3000) {
+    if (text === 'Playing' || text === 'Paused') return;
     const msgEl = $('#display-message');
     if (!msgEl) return;
     clearTimeout(messageTimer);
@@ -101,11 +102,14 @@ const PiStuff = (() => {
     context.hidden = !text;
   }
 
-  function showNowPlaying(status = 'Now playing', loading = false) {
+  function showNowPlaying(status = '', loading = false) {
     clearTimeout(nowPlayingTimer);
     const overlay = document.getElementById('now-playing');
     const statusEl = document.getElementById('now-playing-status');
-    if (statusEl) statusEl.textContent = status;
+    if (statusEl) {
+      statusEl.textContent = status;
+      statusEl.hidden = !status;
+    }
     overlay?.classList.toggle('loading', loading);
     overlay?.classList.add('visible');
   }
@@ -663,13 +667,13 @@ const PiStuff = (() => {
       videoLoading = false;
       hideLoadingState();
       hideControls();
-      showNowPlaying('Now playing');
+      showNowPlaying();
       hideNowPlayingAfterDelay();
     });
 
     video.addEventListener('pause', () => {
       if (videoLoading) return;
-      showNowPlaying('Paused');
+      showNowPlaying();
       showControls(true);  // persist while paused
     });
 

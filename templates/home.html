@@ -52,7 +52,7 @@
 
   <div id="player-container">
     <div id="now-playing" role="status" aria-live="polite">
-      <span id="now-playing-status">Now playing</span>
+      <span id="now-playing-status" hidden></span>
       <div id="now-playing-meta">
         <span id="now-playing-context" hidden></span>
         <span id="now-playing-duration" hidden></span>
@@ -81,5 +81,5 @@
 {% endblock %}
 
 {% block page_script %}
-  <script type="module" src="/static/js/piStuff.js"></script>
+  <script type="module" src="/static/js/piStuff.js?v=20260819-2"></script>
 {% endblock %}
