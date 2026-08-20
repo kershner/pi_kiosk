@@ -11,6 +11,7 @@
   --panel-bg: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.58) 72%, transparent);
   --panel-accent: 0.3rem solid rgba(255, 255, 255, 0.9);
   --panel-radius: 0.25rem 0.8rem 0.8rem 0.25rem;
+  --player-gutter: 2.25rem;
 }
 
 * {
@@ -100,23 +101,21 @@ button.selected { background: #fff !important; color: #000 !important; }
 #paused-controls {
   position: absolute;
   top: 55%;
-  right: 0;
+  right: var(--player-gutter);
   bottom: 8rem;
-  left: 0;
+  left: var(--player-gutter);
   z-index: 11;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: clamp(0.75rem, 2vw, 1.5rem);
-  padding: 1.5rem;
 }
 
 #paused-controls button {
   flex: 1 1 0;
-  max-width: 14rem;
   min-width: 0;
-  min-height: clamp(3.5rem, 12vh, 6rem);
-  padding: 1.25rem;
+  height: clamp(3.5rem, 12vh, 6rem);
+  padding: 0.75rem 1rem;
   border: 0.125rem solid rgba(255, 255, 255, 0.72);
   border-radius: 0.45rem;
   background: rgba(0, 0, 0, 0.88);
@@ -283,15 +282,14 @@ body.screen-off::before {
 #now-playing,
 #video-hud {
   position: absolute;
-  right: 2.25rem;
-  left: 2.25rem;
+  right: var(--player-gutter);
+  left: var(--player-gutter);
   opacity: 0;
   pointer-events: none;
 }
 
 #now-playing {
   top: 1.25rem;
-  right: 7.5rem;
   z-index: 14;
   max-height: calc(55% - 2.5rem);
   padding: 1.2rem 1.5rem 1.35rem;
@@ -387,6 +385,8 @@ body.screen-off::before {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
+
+#loading-indicator:not([hidden]) + #now-playing { padding-right: 7rem; }
 
 #video-hud {
   bottom: 1.25rem;
