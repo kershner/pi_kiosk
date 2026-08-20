@@ -79,10 +79,16 @@ const PiStuff = (() => {
   }
 
   function setVideoTitle(title) {
-    const hudTitle = document.getElementById('video-title-text');
     const largeTitle = document.getElementById('now-playing-title');
-    if (hudTitle) hudTitle.textContent = title;
     if (largeTitle) largeTitle.textContent = title;
+  }
+
+  function setVideoDuration(duration) {
+    const durationEl = document.getElementById('now-playing-duration');
+    if (!durationEl) return;
+    const valid = isFinite(duration) && duration > 0;
+    durationEl.textContent = valid ? formatTime(duration) : '';
+    durationEl.hidden = !valid;
   }
 
   function setNowPlayingContext(categoryKey, playlistName) {
@@ -111,15 +117,6 @@ const PiStuff = (() => {
       }
     }, 5000);
   }
-
-  function showVideoTitle() {
-    document.getElementById('video-title')?.classList.add('visible');
-  }
-
-  function hideVideoTitle() {
-    document.getElementById('video-title')?.classList.remove('visible');
-  }
-
 
   function showSpinner() {
     const el = document.getElementById('loading-spinner');
@@ -157,8 +154,10 @@ const PiStuff = (() => {
 
   function formatTime(seconds) {
     if (!isFinite(seconds) || seconds < 0) return '0:00';
+    const h = Math.floor(seconds / 3600);
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
+    if (h) return `${h}:${(m % 60).toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
@@ -299,6 +298,7 @@ const PiStuff = (() => {
     currentTitle = title;
     currentVideoId = videoId;
     setVideoTitle(title);
+    setVideoDuration(null);
     showNowPlaying('Starting video…');
     setSubtitleTrack(subtitleUrl);
     video.src = url;
@@ -669,7 +669,6 @@ const PiStuff = (() => {
       consecutiveSkips = 0;
       videoLoading = false;
       hideSpinner();
-      hideVideoTitle();
       hideControls();
       showNowPlaying('Now playing');
       hideNowPlayingAfterDelay();
@@ -678,7 +677,6 @@ const PiStuff = (() => {
     video.addEventListener('pause', () => {
       if (videoLoading) return;
       showNowPlaying('Paused');
-      showVideoTitle();
       showControls(true);  // persist while paused
     });
 
@@ -690,6 +688,7 @@ const PiStuff = (() => {
       clearTimeout(streamRefreshTimer);
 
       const duration = video.duration;
+      setVideoDuration(duration);
       const REFRESH_INTERVAL = 5 * 60 * 60; // re-resolve every 5h
       if (!isFinite(duration) || duration < REFRESH_INTERVAL) return;
 

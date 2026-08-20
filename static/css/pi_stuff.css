@@ -322,9 +322,9 @@ body.screen-off::before {
   position: absolute;
   left: 1.5rem;
   right: 1.5rem;
-  bottom: 5.75rem;
+  bottom: 8rem;
   z-index: 14;
-  padding: 1rem 1.25rem 1.15rem;
+  padding: 1.2rem 1.5rem 1.35rem;
   border-left: 0.3rem solid rgba(255, 255, 255, 0.9);
   border-radius: 0.25rem 0.8rem 0.8rem 0.25rem;
   background: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.58) 72%, transparent);
@@ -350,17 +350,34 @@ body.screen-off::before {
   text-transform: uppercase;
 }
 
-#now-playing-context {
+#now-playing-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin-bottom: 0.35rem;
+}
+
+#now-playing-context {
   color: rgba(255, 255, 255, 0.82);
   font-size: clamp(0.85rem, 1.8vw, 1.1rem);
   font-weight: 600;
   letter-spacing: 0.025em;
 }
 
+#now-playing-duration {
+  flex-shrink: 0;
+  padding: 0.18rem 0.45rem;
+  border: 0.0625rem solid rgba(255, 255, 255, 0.4);
+  border-radius: 0.3rem;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: bold;
+}
+
 #now-playing-title {
-  max-width: 90%;
-  font-size: clamp(1.6rem, 4vw, 3rem);
+  max-width: 94%;
+  font-size: clamp(2rem, 5vw, 3.75rem);
   font-weight: 800;
   line-height: 1.08;
   text-wrap: balance;
@@ -432,27 +449,6 @@ body.screen-off::before {
   border-radius: 0.25rem;
   width: 0%;
   pointer-events: none;
-}
-
-/* =============================================================================
-   VIDEO TITLE
-   ============================================================================= */
-#video-title {
-  display: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  font-size: 1.1rem;
-  font-weight: bold;
-  color: #fff;
-}
-
-#video-title.visible {
-  display: flex;
-}
-
-#video-title-text {
-  flex: 1;
 }
 
 #cc-toggle {
