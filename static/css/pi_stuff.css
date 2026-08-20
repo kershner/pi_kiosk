@@ -11,7 +11,6 @@
   --panel-bg: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.58) 72%, transparent);
   --panel-accent: 0.3rem solid rgba(255, 255, 255, 0.9);
   --panel-radius: 0.25rem 0.8rem 0.8rem 0.25rem;
-  --panel-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.28);
 }
 
 * {
@@ -58,9 +57,9 @@ button:active { transform: scale(0.95); }
 button.selected { background: #fff !important; color: #000 !important; }
 
 @keyframes hotspot-reveal {
-  0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
-  15%, 60% { box-shadow: inset 0 0 0 0.125em rgba(255, 255, 255, 0.4); }
-  30% { box-shadow: inset 0 0 0 0.125em rgba(255, 255, 255, 0.6), 0 0 1em rgba(255, 255, 255, 0.3); }
+  0%, 100% { background-color: transparent; }
+  15%, 60% { background-color: rgba(255, 255, 255, 0.07); }
+  30% { background-color: rgba(255, 255, 255, 0.12); }
 }
 
 @keyframes spin {
@@ -86,10 +85,10 @@ button.selected { background: #fff !important; color: #000 !important; }
 #player-overlay-left,
 #player-overlay-right {
   position: absolute;
-  top: 25%;
+  top: 0;
+  bottom: 0;
   z-index: 10;
-  width: 33.33%;
-  height: 50%;
+  width: 50%;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -97,6 +96,28 @@ button.selected { background: #fff !important; color: #000 !important; }
 
 #player-overlay-left { left: 0; }
 #player-overlay-right { right: 0; }
+
+#paused-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  padding: 1.5rem;
+}
+
+#paused-controls button {
+  min-width: clamp(9rem, 20vw, 14rem);
+  min-height: 6rem;
+  padding: 1.25rem;
+  border: 0.125rem solid rgba(255, 255, 255, 0.72);
+  border-radius: 0.45rem;
+  background: rgba(0, 0, 0, 0.88);
+  font-size: clamp(1rem, 2.4vw, 1.5rem);
+  font-weight: 800;
+}
 
 .menu-button {
   position: fixed;
@@ -222,7 +243,6 @@ body.screen-off::before {
   border-left: var(--panel-accent);
   border-radius: var(--panel-radius);
   background: var(--panel-bg);
-  box-shadow: var(--panel-shadow);
   color: #fff;
 }
 
@@ -234,6 +254,7 @@ body.screen-off::before {
   min-width: 8rem;
   max-width: 80vw;
   padding: 0.9rem 1.3rem 1rem;
+  background: rgba(0, 0, 0, 0.9);
   opacity: 0;
   transform: translate(-50%, calc(-50% + 0.45rem));
   transition: opacity 0.25s ease, transform 0.25s ease;
@@ -260,7 +281,8 @@ body.screen-off::before {
 }
 
 #now-playing {
-  bottom: 8rem;
+  top: 1.25rem;
+  right: 7.5rem;
   z-index: 14;
   padding: 1.2rem 1.5rem 1.35rem;
   transform: translateY(0.75rem);
@@ -283,17 +305,32 @@ body.screen-off::before {
   text-transform: uppercase;
 }
 
-#now-playing.loading #now-playing-status::after {
-  display: inline-block;
-  width: 0.72em;
-  height: 0.72em;
-  margin-left: 0.55em;
-  border: 0.12em solid rgba(255, 255, 255, 0.3);
-  border-top-color: currentColor;
+#loading-indicator {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.5rem;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.loading-indicator-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 0.15rem solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
   border-radius: 50%;
   animation: spin 0.75s linear infinite;
-  content: "";
-  vertical-align: -0.06em;
 }
 
 #now-playing-meta {
@@ -369,7 +406,7 @@ body.screen-off::before {
 #progress-bar {
   position: relative;
   flex: 1;
-  height: 1.4rem;
+  height: 2.75rem;
   border-radius: 999px;
   cursor: pointer;
   touch-action: none;
@@ -380,7 +417,7 @@ body.screen-off::before {
   position: absolute;
   top: 50%;
   left: 0;
-  height: 0.7rem;
+  height: 1.25rem;
   border-radius: inherit;
   transform: translateY(-50%);
 }
@@ -411,6 +448,20 @@ body.screen-off::before {
   letter-spacing: 0.05em;
   line-height: 1;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+#playback-state {
+  flex-shrink: 0;
+  min-width: 4.75rem;
+  padding: 0.38rem 0.55rem;
+  border: 0.0625rem solid rgba(255, 255, 255, 0.4);
+  border-radius: 0.3rem;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 #cc-toggle.active {

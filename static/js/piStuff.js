@@ -15,11 +15,11 @@ const state = {
   videoId: null,
   lastVideoId: null,
   title: '',
-  history: [],
   queuedChoice: null,
   shuffleScope: null,
   errors: 0,
   loading: false,
+  showCatalogContext: true,
   switchingPlaylist: false,
   started: false,
   resuming: false,
@@ -49,17 +49,20 @@ function cacheDom() {
     playlists: $('#playlists'),
     qr: $('#qr-container'),
     message: $('#display-message'),
+    loadingIndicator: $('#loading-indicator'),
     nowPlaying: $('#now-playing'),
     status: $('#now-playing-status'),
     context: $('#now-playing-context'),
     duration: $('#now-playing-duration'),
     title: $('#now-playing-title'),
+    pausedControls: $('#paused-controls'),
     hud: $('#video-hud'),
     progress: $('#progress-bar'),
     progressFill: $('#progress-fill'),
     currentTime: $('#time-current'),
     remainingTime: $('#time-remaining'),
     captions: $('#cc-toggle'),
+    playbackState: $('#playback-state'),
   });
 }
 
@@ -109,11 +112,10 @@ function showMessage(text, duration = 2000) {
   schedule('message', () => dom.message.classList.remove('show'), duration);
 }
 
-function showNowPlaying(status = '', loading = false) {
+function showNowPlaying(status = '') {
   clearTimer('nowPlaying');
   dom.status.textContent = status;
   dom.status.hidden = !status;
-  dom.nowPlaying.classList.toggle('loading', loading);
   dom.nowPlaying.classList.add('visible');
 }
 
@@ -125,7 +127,9 @@ function hideNowPlayingAfter(delay) {
 
 function setContext(category = state.category, playlistName = state.playlistName) {
   const categoryName = state.categoryNames[category] || category || '';
-  const text = [categoryName, playlistName].filter(Boolean).join('  •  ');
+  const text = state.showCatalogContext
+    ? [categoryName, playlistName].filter(Boolean).join('  •  ')
+    : '';
   dom.context.textContent = text;
   dom.context.hidden = !text;
 }
@@ -136,23 +140,30 @@ function setDuration(duration) {
   dom.duration.hidden = !valid;
 }
 
-function beginLoading() {
+function setPlaybackState(label) {
+  dom.playbackState.textContent = label;
+}
+
+function beginLoading(message = 'Preparing video…') {
   state.loading = true;
-  showNowPlaying(state.title ? 'Loading next video' : 'Loading video', true);
+  dom.loadingIndicator.hidden = false;
+  dom.pausedControls.hidden = true;
+  setPlaybackState('Loading');
+  dom.title.textContent = message;
+  setDuration(null);
+  showNowPlaying('Loading');
 }
 
 function endLoading() {
-  dom.nowPlaying.classList.remove('loading');
+  state.loading = false;
+  dom.loadingIndicator.hidden = true;
 }
 
-function showHud(persist = false) {
-  clearTimer('hud');
+function showHud() {
   dom.hud.classList.add('visible');
-  if (!persist) schedule('hud', () => dom.hud.classList.remove('visible'), 3000);
 }
 
 function hideHud() {
-  clearTimer('hud');
   dom.hud.classList.remove('visible');
 }
 
@@ -265,7 +276,7 @@ function setVideoSource(data) {
   state.resuming = false;
   dom.title.textContent = state.title;
   setDuration(null);
-  showNowPlaying('Starting video', true);
+  showNowPlaying('Starting playback');
   setCaptionSource(data.subtitle_url);
 
   dom.video.src = data.url;
@@ -273,8 +284,6 @@ function setVideoSource(data) {
   dom.video.play().catch(error => console.error('play() failed:', error));
 
   if (data.video_id) {
-    if (state.lastVideoId) state.history.push(state.lastVideoId);
-    if (state.history.length > 20) state.history.shift();
     state.lastVideoId = data.video_id;
   }
   if (state.shuffleScope) queueShufflePrefetch();
@@ -291,7 +300,7 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
   cancelRequest();
   const controller = new AbortController();
   state.request = controller;
-  beginLoading();
+  beginLoading(videoId ? 'Loading requested video…' : 'Finding the next video…');
 
   const direct = Boolean(videoId);
   const params = direct
@@ -309,7 +318,13 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
     if (error.name === 'AbortError') return false;
     console.error('Video resolution failed:', error);
     if (playlistId) skipUnplayable();
-    else showMessage('Could not play video', 3000);
+    else {
+      endLoading();
+      dom.title.textContent = state.title;
+      showNowPlaying('Unable to play video');
+      hideNowPlayingAfter(3000);
+      showMessage('Could not play video', 3000);
+    }
     return false;
   } finally {
     if (state.request === controller) state.request = null;
@@ -317,6 +332,7 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
 }
 
 function playVideo(videoId) {
+  state.showCatalogContext = false;
   state.playlistName = '';
   setContext(null, '');
   return resolveAndPlay({ videoId });
@@ -338,7 +354,7 @@ function findChoice(playlistId) {
   return state.playlistIndex.get(playlistId) || null;
 }
 
-function loadPlaylist(playlistId, name = 'playlist') {
+function loadPlaylist(playlistId, name = 'playlist', { showContext = true } = {}) {
   const choice = findChoice(playlistId);
   if (choice) {
     state.category = choice.category;
@@ -347,6 +363,7 @@ function loadPlaylist(playlistId, name = 'playlist') {
   state.queuedChoice = null;
   state.playlistId = playlistId;
   state.playlistName = name || 'playlist';
+  state.showCatalogContext = showContext;
   state.errors = 0;
   state.lastVideoId = null;
   state.switchingPlaylist = true;
@@ -390,7 +407,7 @@ function playChoice(choice) {
   if (!choice) return false;
   selectCategory(choice.category);
   dom.menu.hidden = true;
-  return loadPlaylist(choice.id, choice.name);
+  return loadPlaylist(choice.id, choice.name, { showContext: true });
 }
 
 function playRandom() {
@@ -519,7 +536,6 @@ function scheduleStreamRefresh() {
 }
 
 function advanceVideo() {
-  showNowPlaying('Loading next video', true);
   return state.shuffleScope ? playQueuedShuffle() : loadNext();
 }
 
@@ -529,7 +545,6 @@ function initVideoEvents() {
   });
   dom.video.addEventListener('error', () => {
     if (state.switchingPlaylist) return;
-    endLoading();
     console.warn('Fatal media error; skipping video', dom.video.error);
     skipUnplayable();
   });
@@ -538,20 +553,23 @@ function initVideoEvents() {
     const resumed = state.resuming;
     state.started = true;
     state.resuming = false;
-    state.loading = false;
     state.errors = 0;
     endLoading();
+    setPlaybackState('Playing');
+    dom.pausedControls.hidden = true;
     hideHud();
     if (firstPlayback || resumed) {
-      showNowPlaying();
+      showNowPlaying('Playing');
       hideNowPlayingAfter(firstPlayback ? 5000 : 2000);
     }
   });
   dom.video.addEventListener('pause', () => {
     if (state.loading) return;
     state.resuming = true;
-    showNowPlaying();
-    showHud(true);
+    setPlaybackState('Paused');
+    dom.pausedControls.hidden = false;
+    showNowPlaying('Paused');
+    showHud();
   });
   dom.video.addEventListener('timeupdate', updateProgress);
   dom.video.addEventListener('loadedmetadata', () => {
@@ -560,71 +578,45 @@ function initVideoEvents() {
   });
 }
 
-function initTapControls() {
-  const delay = 220;
+function initPlaybackControls() {
   const seekSeconds = 20;
 
   for (const side of ['left', 'right']) {
     const overlay = document.createElement('div');
     overlay.id = `player-overlay-${side}`;
     $('#player-container').appendChild(overlay);
-    let count = 0;
-    let lastTap = 0;
-    let initiallyPaused = false;
-    let resetTimer;
-
-    const resetLater = () => {
-      clearTimeout(resetTimer);
-      resetTimer = setTimeout(() => { count = 0; lastTap = 0; }, delay);
-    };
-    const restorePlayback = () => {
-      if (initiallyPaused && !dom.video.paused) dom.video.pause();
-      if (!initiallyPaused && dom.video.paused) dom.video.play().catch(() => {});
-    };
 
     overlay.addEventListener('pointerup', event => {
       if (event.pointerType === 'touch') event.preventDefault();
-      if (document.body.classList.contains('screen-off')) return;
-      const now = Date.now();
-      const continuing = now - lastTap < delay;
-
-      if (!continuing) {
-        initiallyPaused = dom.video.paused;
-        initiallyPaused ? dom.video.play().catch(() => {}) : dom.video.pause();
-        showHud(!initiallyPaused);
-        count = 1;
-        lastTap = now;
-        resetLater();
-        return;
-      }
-
-      if (count === 1) {
-        restorePlayback();
-        const delta = side === 'left' ? -seekSeconds : seekSeconds;
-        dom.video.currentTime = Math.max(0, Math.min(dom.video.duration || Infinity, dom.video.currentTime + delta));
-        showMessage(`${delta > 0 ? '+' : ''}${delta}s`, 1000);
-        count = 2;
-        lastTap = now;
-        resetLater();
-        return;
-      }
-
-      clearTimeout(resetTimer);
-      if (side === 'left') {
-        const previous = state.history.pop();
-        previous ? playVideo(previous) : loadNext();
-        showMessage('Previous video', 1000);
-      } else {
-        state.shuffleScope ? playQueuedShuffle() : loadNext();
-        showMessage('Next video', 1000);
-      }
-      count = 0;
-      lastTap = 0;
+      if (document.body.classList.contains('screen-off') || state.loading || dom.video.paused) return;
+      dom.video.pause();
     });
   }
 
-  $$('#player-overlay-left, #player-overlay-right, .menu-button')
-    .forEach(element => element.classList.add('overlay-highlight'));
+  dom.pausedControls.addEventListener('click', event => {
+    const button = event.target.closest('[data-paused-action]');
+    if (!button) {
+      dom.video.play().catch(() => {});
+      return;
+    }
+
+    const action = button.dataset.pausedAction;
+    if (action === 'back' || action === 'forward') {
+      const delta = action === 'back' ? -seekSeconds : seekSeconds;
+      const duration = Number.isFinite(dom.video.duration) ? dom.video.duration : Infinity;
+      dom.video.currentTime = Math.max(0, Math.min(duration, dom.video.currentTime + delta));
+      updateProgress();
+      showMessage(`${delta > 0 ? '+' : ''}${delta}s`, 1000);
+      return;
+    }
+
+    if (action === 'next') {
+      state.shuffleScope ? playQueuedShuffle() : loadNext();
+      showMessage('Next video', 1000);
+    }
+  });
+
+  dom.menuButton.classList.add('overlay-highlight');
 }
 
 async function fetchLatest() {
@@ -640,7 +632,7 @@ function initRemotePoller() {
       state.latestTs = data.ts;
       if (!playNew) return;
       if (data.type === 'playlist') {
-        loadPlaylist(data.youtube_id, 'Submitted playlist');
+        loadPlaylist(data.youtube_id, 'Submitted playlist', { showContext: false });
         showMessage('✓ Playlist playing!', 3000);
       } else {
         playVideo(data.youtube_id);
@@ -676,7 +668,7 @@ function init() {
   initMenu();
   initScrubber();
   initCaptions();
-  initTapControls();
+  initPlaybackControls();
   initVideoEvents();
   initRemotePoller();
   applyQuery();
