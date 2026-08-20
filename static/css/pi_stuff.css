@@ -385,29 +385,32 @@ body.screen-off::before {
 }
 
 /* =============================================================================
-   VIDEO HUD (shared frosted container for controls + title)
+   VIDEO HUD (compact companion card, visually separate from title overlay)
    ============================================================================= */
 #video-hud {
   position: absolute;
   bottom: 1.25rem;
-  left: 1.25rem;
-  right: 1.25rem;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(10px);
-  border: 0.0625em solid rgba(255, 255, 255, 0.3);
-  border-radius: 0.75rem;
-  padding: 0.75rem 1rem;
+  left: 2.25rem;
+  right: 2.25rem;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.68));
+  border: 0.0625rem solid rgba(255, 255, 255, 0.18);
+  border-left: 0.3rem solid rgba(255, 255, 255, 0.9);
+  border-radius: 0.25rem 0.7rem 0.7rem 0.25rem;
+  padding: 0.75rem 1rem 0.8rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.25s;
+  transform: translateY(0.4rem);
+  transition: opacity 0.3s ease, transform 0.3s ease;
   z-index: 15;
+  box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.28);
 }
 
 #video-hud.visible {
   opacity: 1;
+  transform: translateY(0);
   pointer-events: auto;
 }
 
@@ -422,11 +425,12 @@ body.screen-off::before {
 
 #time-current,
 #time-remaining {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: bold;
-  color: #fff;
+  color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
   min-width: 2.75rem;
+  font-variant-numeric: tabular-nums;
 }
 
 #time-remaining {
@@ -435,27 +439,45 @@ body.screen-off::before {
 
 #progress-bar {
   flex: 1;
-  height: 1rem;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 0.25rem;
+  height: 1.4rem;
+  background: transparent;
+  border-radius: 999px;
   cursor: pointer;
   position: relative;
   box-sizing: content-box;
 }
 
+#progress-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 0.7rem;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.2);
+  border: 0.0625rem solid rgba(255, 255, 255, 0.18);
+  border-radius: inherit;
+}
+
 #progress-fill {
-  height: 100%;
-  background: #fff;
-  border-radius: 0.25rem;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 1;
+  height: 0.7rem;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: inherit;
   width: 0%;
   pointer-events: none;
 }
 
 #cc-toggle {
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.15);
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+  border: 0.0625rem solid rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.72);
   border-radius: 0.3rem;
   font-size: 0.8rem;
   font-weight: bold;
