@@ -18,6 +18,10 @@ import resolver
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 logging.basicConfig(level=logging.INFO, format='[pi_server] %(message)s')
+# The kiosk polls /latest every few seconds. Werkzeug's per-request access log
+# adds no operational value here and otherwise writes tens of thousands of
+# repetitive lines to the SD card every day.
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 _search_cache = {}
 
 MWEB_USER_AGENT = (

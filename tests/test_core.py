@@ -1,5 +1,7 @@
 import unittest
+import subprocess
 from unittest.mock import patch
+from unittest.mock import Mock
 
 import resolver
 import app as web
@@ -28,6 +30,38 @@ class YouTubeUrlTests(unittest.TestCase):
 
 
 class ResolverTests(unittest.TestCase):
+    def test_ytdlp_uses_a_managed_subprocess(self):
+        process = Mock()
+        process.communicate.return_value = ("result\n", "")
+        process.returncode = 0
+
+        with patch.object(resolver.subprocess, "Popen", return_value=process) as popen:
+            output = resolver.run_ytdlp("--version")
+
+        self.assertEqual(output, "result")
+        self.assertEqual(popen.call_count, 1)
+        process.communicate.assert_called_once_with(timeout=45)
+
+    def test_ytdlp_timeout_kills_the_process_group_on_posix(self):
+        process = Mock(pid=123)
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired("yt-dlp", 45),
+            ("", ""),
+        ]
+
+        with (
+            patch.object(resolver.os, "name", "posix"),
+            patch.object(resolver.subprocess, "Popen", return_value=process) as popen,
+            patch.object(resolver.os, "killpg", create=True) as killpg,
+            patch.object(resolver.signal, "SIGKILL", 9, create=True),
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                resolver.run_ytdlp("--version")
+
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        killpg.assert_called_once_with(123, 9)
+        self.assertEqual(process.communicate.call_count, 2)
+
     def test_prefers_manual_english_subtitles(self):
         info = {
             "subtitles": {

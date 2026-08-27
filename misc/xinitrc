@@ -13,6 +13,26 @@ sleep 3
 
 mkdir -p /home/pi/logs
 
+# Keep long-running kiosk logs bounded. Truncating the active file in place is
+# important because the server processes retain their open append descriptors.
+trim_kiosk_logs() {
+  while true; do
+    for kiosk_log in \
+      /home/pi/logs/pi_server.log \
+      /home/pi/logs/pot_provider.log \
+      /home/pi/logs/chromium.log \
+      /home/pi/logs/xinitrc.log
+    do
+      if [ -f "$kiosk_log" ] && [ "$(stat -c %s "$kiosk_log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+        tail -c 10485760 "$kiosk_log" > "${kiosk_log}.1"
+        : > "$kiosk_log"
+      fi
+    done
+    sleep 60
+  done
+}
+trim_kiosk_logs &
+
 # YouTube PO token provider (port 4416)
 nice -n 10 /usr/local/bin/node /home/pi/bgutil-ytdlp-pot-provider/server/build/main.js >> /home/pi/logs/pot_provider.log 2>&1 &
 
@@ -61,6 +81,7 @@ xinput set-prop "raspberrypi-ts" "Coordinate Transformation Matrix" 0.5 0 0 0 1 
 
 echo "Launching Chromium" >> /home/pi/logs/xinitrc.log
 while true; do
+  # /tmp is tmpfs on this Pi, so keep Chromium caches small enough for 742 MiB RAM.
   chromium \
     --kiosk \
     --noerrdialogs \
@@ -82,6 +103,8 @@ while true; do
     --metrics-recording-only \
     --mute-audio \
     --disk-cache-dir=/tmp/chromium-cache \
+    --disk-cache-size=16777216 \
+    --media-cache-size=33554432 \
     --user-data-dir=/home/pi/.config/chromium-kiosk \
     --allow-running-insecure-content \
     http://localhost:5020?shuffle=true \

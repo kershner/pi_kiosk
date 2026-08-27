@@ -291,6 +291,11 @@ function setVideoSource(data) {
   showNowPlaying('Starting playback');
   setCaptionSource(data.subtitle_url);
 
+  // Force Chromium to release the previous decoder, network connection, and
+  // media buffers before attaching the next direct stream.
+  dom.video.pause();
+  dom.video.removeAttribute('src');
+  dom.video.load();
   dom.video.src = data.url;
   dom.video.load();
   dom.video.play().catch(error => {
@@ -643,8 +648,17 @@ function initPlaybackControls() {
 }
 
 async function fetchLatest() {
-  const response = await fetch(`/latest?device=${encodeURIComponent(state.deviceId)}`);
-  return response.status === 204 ? null : response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(
+      `/latest?device=${encodeURIComponent(state.deviceId)}`,
+      { signal: controller.signal },
+    );
+    return response.status === 204 ? null : response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function initRemotePoller() {
@@ -664,9 +678,12 @@ function initRemotePoller() {
       toggleQr(false);
       dom.menu.hidden = true;
     } catch (_) { }
+    finally {
+      schedule('remotePoll', () => poll(), 2500);
+    }
   };
 
-  poll(false).finally(() => setInterval(poll, 2500));
+  poll(false);
 }
 
 function applyQuery() {

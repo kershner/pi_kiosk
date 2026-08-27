@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import random
+import signal
 import socket
 import subprocess
 import sys
@@ -29,6 +30,7 @@ _prefetch_cache = {}
 _prefetch_futures = {}
 _cache_lock = threading.RLock()
 _cache_file_lock = threading.Lock()
+_ytdlp_process_lock = threading.Lock()
 _prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prefetch")
 _task_context = threading.local()
 _initialized = False
@@ -84,7 +86,7 @@ def load_persistent_cache():
 
 
 def run_ytdlp(*args, timeout=45):
-    """Run yt-dlp from the active venv and return its standard output."""
+    """Run one yt-dlp process at a time and clean up its children on timeout."""
     cmd = [
         sys.executable,
         "-m",
@@ -100,20 +102,37 @@ def run_ytdlp(*args, timeout=45):
     if os.name == "posix" and getattr(_task_context, "background", False):
         cmd = ["nice", "-n", "10", *cmd]
 
-    started = time.monotonic()
     target = args[-1] if args else "request"
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        log.warning("yt-dlp timed out after %.1fs for %s", time.monotonic() - started, target)
-        raise
+    with _ytdlp_process_lock:
+        started = time.monotonic()
+        process_options = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if os.name == "posix":
+            # yt-dlp may launch Node for challenge solving. A new session lets a
+            # timeout kill that entire process tree instead of orphaning Node.
+            process_options["start_new_session"] = True
+
+        process = subprocess.Popen(cmd, **process_options)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            process.communicate()
+            log.warning("yt-dlp timed out after %.1fs for %s", time.monotonic() - started, target)
+            raise
 
     log.info("yt-dlp completed in %.1fs for %s", time.monotonic() - started, target)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "yt-dlp failed")
-    for line in result.stderr.strip().splitlines():
+    if process.returncode != 0:
+        raise RuntimeError(stderr.strip() or "yt-dlp failed")
+    for line in stderr.strip().splitlines():
         log.info("yt-dlp: %s", line)
-    return result.stdout.strip()
+    return stdout.strip()
 
 
 def validate_stream_url(url, http_headers=None):
