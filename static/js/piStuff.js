@@ -23,6 +23,7 @@ const state = {
   switchingPlaylist: false,
   started: false,
   resuming: false,
+  resumeAfterMenu: false,
   latestTs: 0,
   request: null,
   captions: localStorage.getItem(CAPTIONS_KEY) !== 'false',
@@ -127,9 +128,7 @@ function hideNowPlayingAfter(delay) {
 
 function hideNowPlayingImmediately() {
   clearTimer('nowPlaying');
-  dom.nowPlaying.classList.add('hide-immediately');
   dom.nowPlaying.classList.remove('visible');
-  requestAnimationFrame(() => dom.nowPlaying.classList.remove('hide-immediately'));
 }
 
 function setContext(category = state.category, playlistName = state.playlistName) {
@@ -155,6 +154,7 @@ function setPausedUi(paused) {
   setPlaybackState(paused ? 'Paused' : 'Playing');
   dom.pausedControls.hidden = !paused;
   dom.hud.classList.toggle('visible', paused);
+  if (paused) updateProgress();
 }
 
 function beginLoading(message = 'Preparing video…') {
@@ -194,6 +194,7 @@ function initScrubber() {
     const rect = dom.progress.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     dom.video.currentTime = ratio * dom.video.duration;
+    updateProgress();
   };
 
   dom.progress.addEventListener('pointerdown', event => {
@@ -430,6 +431,7 @@ function chooseRandomPlaylist() {
 
 function playChoice(choice) {
   if (!choice) return false;
+  state.resumeAfterMenu = false;
   selectCategory(choice.category);
   dom.menu.hidden = true;
   return loadPlaylist(choice.id, choice.name, { showContext: true });
@@ -504,6 +506,19 @@ function cycleShuffle() {
 }
 
 function initMenu() {
+  const openMenu = () => {
+    state.resumeAfterMenu = !dom.video.paused && !state.loading;
+    if (state.resumeAfterMenu) dom.video.pause();
+    dom.menu.hidden = false;
+  };
+
+  const closeMenu = () => {
+    dom.menu.hidden = true;
+    if (!state.resumeAfterMenu) return;
+    state.resumeAfterMenu = false;
+    dom.video.play().catch(() => {});
+  };
+
   const actions = {
     qr: () => toggleQr(true),
     'regenerate-qr': regenerateQr,
@@ -514,10 +529,10 @@ function initMenu() {
       document.body.classList.add('screen-off');
       dom.menu.hidden = true;
     },
-    close: () => { dom.menu.hidden = true; },
+    close: closeMenu,
   };
 
-  dom.menuButton.addEventListener('click', () => { dom.menu.hidden = false; });
+  dom.menuButton.addEventListener('click', openMenu);
   dom.menu.addEventListener('click', event => {
     const target = event.target.closest('[data-category],[data-playlist],[data-action]');
     if (!target) return;
@@ -593,9 +608,9 @@ function initVideoEvents() {
     setPausedUi(true);
     showNowPlaying('Paused');
   });
-  dom.video.addEventListener('timeupdate', updateProgress);
   dom.video.addEventListener('loadedmetadata', () => {
     setDuration(dom.video.duration);
+    updateProgress();
     scheduleStreamRefresh();
   });
 }
@@ -644,7 +659,6 @@ function initPlaybackControls() {
     }
   });
 
-  dom.menuButton.classList.add('overlay-highlight');
 }
 
 async function fetchLatest() {
@@ -669,9 +683,11 @@ function initRemotePoller() {
       state.latestTs = data.ts;
       if (!playNew) return;
       if (data.type === 'playlist') {
+        state.resumeAfterMenu = false;
         loadPlaylist(data.youtube_id, 'Submitted playlist', { showContext: false });
         showMessage('✓ Playlist playing!', 3000);
       } else {
+        state.resumeAfterMenu = false;
         playVideo(data.youtube_id);
         showMessage('✓ Video playing!', 3000);
       }
