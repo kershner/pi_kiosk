@@ -132,6 +132,7 @@ class PlayerApiTests(unittest.TestCase):
         self.assertNotIn(b"API_PLAY_URL", home.data)
         self.assertEqual(submit.status_code, 200)
         self.assertIn(b"/static/js/submitForm.js", submit.data)
+        self.assertIn(b'id="submit-action" class="submit-action" hidden', submit.data)
         static = self.client.get("/static/js/piStuff.js")
         self.assertIn("no-cache", static.headers["Cache-Control"])
         static.close()

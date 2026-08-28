@@ -322,11 +322,21 @@ async function playerRequest(endpoint, params, signal) {
   return data;
 }
 
+function continueCurrentVideoWhileResolving() {
+  if (!dom.video.currentSrc || dom.video.ended || dom.video.error) return;
+  dom.video.play().catch(error => {
+    if (error.name !== 'AbortError') {
+      console.warn('Could not continue current video while resolving:', error);
+    }
+  });
+}
+
 async function resolveAndPlay({ videoId = null, playlistId = null }) {
   cancelRequest();
   const controller = new AbortController();
   state.request = controller;
   beginLoading(videoId ? 'Loading requested video…' : 'Finding the next video…');
+  continueCurrentVideoWhileResolving();
 
   const direct = Boolean(videoId);
   const params = direct

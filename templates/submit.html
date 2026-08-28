@@ -34,7 +34,9 @@
       </div>
       <input type="hidden" name="token" value="{{ token }}">
       <input type="hidden" name="device_id" value="{{ device_id }}">
-      <button class="submit-button" type="submit">Send to Display</button>
+      <div id="submit-action" class="submit-action" hidden>
+        <button class="submit-button" type="submit">Send to display</button>
+      </div>
     </form>
 
     {# Search results container - appears below the form #}

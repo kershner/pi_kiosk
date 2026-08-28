@@ -3,7 +3,9 @@ const input = document.getElementById('search-input');
 const searchButton = document.getElementById('search-button');
 const results = document.getElementById('search-results-container');
 const message = document.getElementById('display-message');
-let selected = -1;
+const submitAction = document.getElementById('submit-action');
+const submitButton = form.querySelector('.submit-button');
+const youtubeUrlPattern = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i;
 let messageTimer;
 
 function showMessage(text, duration = 3000) {
@@ -13,8 +15,8 @@ function showMessage(text, duration = 3000) {
   messageTimer = setTimeout(() => message.classList.remove('show'), duration);
 }
 
-function items() {
-  return [...results.querySelectorAll('.search-result-item')];
+function setSubmitReady(ready) {
+  submitAction.hidden = !ready;
 }
 
 function selectItem(item) {
@@ -23,14 +25,7 @@ function selectItem(item) {
   input.value = playlist
     ? `https://www.youtube.com/playlist?list=${id}`
     : `https://www.youtube.com/watch?v=${id}`;
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-function highlight(index) {
-  const choices = items();
-  selected = Math.max(-1, Math.min(index, choices.length - 1));
-  choices.forEach((item, position) => item.classList.toggle('selected', position === selected));
-  choices[selected]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  setSubmitReady(true);
 }
 
 function normalizeSearchError() {
@@ -42,15 +37,15 @@ function normalizeSearchError() {
 
 async function search() {
   const query = input.value.trim();
-  if (query.length < 3 || /^https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)/.test(query)) return;
+  if (query.length < 3 || youtubeUrlPattern.test(query)) return;
 
   results.innerHTML = '<div class="search-loading">Searching YouTube...</div>';
   results.classList.remove('hidden');
-  selected = -1;
+  setSubmitReady(false);
   try {
     const response = await fetch(`/api/youtube-search?q=${encodeURIComponent(query)}`);
     if (!response.ok) throw new Error(`Search returned ${response.status}`);
-    results.innerHTML = `<div class="search-results">${await response.text()}</div>`;
+    results.innerHTML = await response.text();
     normalizeSearchError();
   } catch (error) {
     console.error('Search failed:', error);
@@ -63,26 +58,18 @@ results.addEventListener('click', event => {
   const item = event.target.closest('.search-result-item');
   if (item) selectItem(item);
 });
-
-input.addEventListener('keydown', event => {
-  const choices = items();
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    if (!choices.length) return;
-    event.preventDefault();
-    highlight(selected + (event.key === 'ArrowDown' ? 1 : -1));
-  } else if (event.key === 'Escape') {
-    results.classList.add('hidden');
-    selected = -1;
-  } else if (event.key === 'Enter') {
-    event.preventDefault();
-    selected >= 0 ? selectItem(choices[selected]) : search();
-  }
+input.addEventListener('input', () => {
+  setSubmitReady(youtubeUrlPattern.test(input.value.trim()));
 });
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  const button = form.querySelector('.submit-button');
-  button.disabled = true;
+  if (submitAction.hidden) {
+    await search();
+    return;
+  }
+  submitButton.disabled = true;
+  submitButton.textContent = 'Sending…';
   try {
     const response = await fetch('/api/play', {
       method: 'POST',
@@ -101,9 +88,11 @@ form.addEventListener('submit', async event => {
     showMessage('✓ Video sent successfully!');
     form.reset();
     results.classList.add('hidden');
+    setSubmitReady(false);
   } catch (error) {
     showMessage(error.message || 'Network error. Please try again.');
   } finally {
-    button.disabled = false;
+    submitButton.disabled = false;
+    submitButton.textContent = 'Send to display';
   }
 });
