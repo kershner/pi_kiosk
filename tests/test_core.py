@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import resolver
 import app as web
+import catalog
 from remote import extract_youtube_id
 
 
@@ -119,7 +120,7 @@ class PlayerApiTests(unittest.TestCase):
         self.client = web.app.test_client()
 
     def test_pages_render_without_injected_route_constants(self):
-        with patch.object(web, "get_categories", return_value=[]):
+        with patch.object(web, "get_categories", return_value=[]) as get_categories:
             home = self.client.get("/")
         submit = self.client.get("/submit")
 
@@ -135,6 +136,8 @@ class PlayerApiTests(unittest.TestCase):
         self.assertIn(b'id="submit-action" class="submit-action" hidden', submit.data)
         self.assertIn(b'id="submit-status" class="submit-status"', submit.data)
         self.assertNotIn(b'id="display-message"', home.data + submit.data)
+        self.assertIn("no-store", home.headers["Cache-Control"])
+        get_categories.assert_called_once_with(force_refresh=True)
         static = self.client.get("/static/js/piStuff.js")
         self.assertIn("no-cache", static.headers["Cache-Control"])
         static.close()
@@ -171,6 +174,35 @@ class PlayerApiTests(unittest.TestCase):
         wait.assert_not_called()
         resolve.assert_not_called()
         schedule.assert_called_once_with("PL123", "abc")
+
+
+class CatalogTests(unittest.TestCase):
+    def setUp(self):
+        self.original_cache = catalog._cache.copy()
+
+    def tearDown(self):
+        with catalog._lock:
+            catalog._cache.update(self.original_cache)
+
+    def test_force_refresh_bypasses_fresh_cache(self):
+        with catalog._lock:
+            catalog._cache.update(data=[{"name": "old"}], ts=catalog.time.time())
+
+        with patch.object(catalog, "_fetch", return_value=[{"name": "new"}]) as fetch:
+            categories = catalog.get_categories(force_refresh=True)
+
+        self.assertEqual(categories, [{"name": "new"}])
+        fetch.assert_called_once_with()
+
+    def test_force_refresh_keeps_last_good_catalog_on_failure(self):
+        cached = [{"name": "available offline"}]
+        with catalog._lock:
+            catalog._cache.update(data=cached, ts=catalog.time.time())
+
+        with patch.object(catalog, "_fetch", return_value=None):
+            categories = catalog.get_categories(force_refresh=True)
+
+        self.assertEqual(categories, cached)
 
 
 if __name__ == "__main__":

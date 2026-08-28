@@ -24,12 +24,12 @@ def _fetch():
         return None
 
 
-def get_categories():
-    """Return the current catalog, refreshing it when stale."""
+def get_categories(force_refresh=False):
+    """Return the current catalog, optionally refreshing it immediately."""
     with _lock:
         stale = time.time() - _cache["ts"] > CATEGORIES_REFRESH_INTERVAL
         current = _cache["data"]
-    if not stale:
+    if not force_refresh and not stale:
         return current
 
     data = _fetch()

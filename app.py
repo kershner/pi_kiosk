@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, make_response
 from config import FLASK_PORT, YOUTUBE_BASE_API_URL, YOUTUBE_API_KEY, SEARCH_CACHE_TTL
 from remote import (
     get_or_create_qr_code, invalidate_qr_cache,
@@ -48,18 +48,25 @@ def get_base_url():
 @app.route('/')
 def home():
     device_id = request.args.get('device_id', '')
-    categories = get_categories()
+    # A browser reload should pick up Django admin changes immediately. The
+    # catalog helper still falls back to its last good response if this fetch
+    # fails, so a temporary internet outage does not empty the kiosk menu.
+    categories = get_categories(force_refresh=True)
 
     qr_code_b64 = None
     if device_id:
         qr_code_b64 = get_or_create_qr_code(device_id, get_base_url())
 
-    return render_template(
-        'home.html',
-        categories=categories,
-        categories_json=json.dumps(categories),
-        qr_code_b64=qr_code_b64,
+    response = make_response(
+        render_template(
+            'home.html',
+            categories=categories,
+            categories_json=json.dumps(categories),
+            qr_code_b64=qr_code_b64,
+        )
     )
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/submit')
