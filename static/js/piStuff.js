@@ -49,7 +49,6 @@ function cacheDom() {
     menuButton: $('.menu-button'),
     playlists: $('#playlists'),
     qr: $('#qr-container'),
-    message: $('#display-message'),
     loadingIndicator: $('#loading-indicator'),
     nowPlaying: $('#now-playing'),
     status: $('#now-playing-status'),
@@ -106,13 +105,6 @@ function formatTime(seconds) {
     : `${minutes}:${secs}`;
 }
 
-function showMessage(text, duration = 2000) {
-  if (!dom.message) return;
-  dom.message.textContent = text;
-  dom.message.className = 'display-message show';
-  schedule('message', () => dom.message.classList.remove('show'), duration);
-}
-
 function showNowPlaying(status) {
   clearTimer('nowPlaying');
   dom.status.textContent = status;
@@ -161,6 +153,7 @@ function beginLoading(message = 'Preparing video…') {
   state.loading = true;
   dom.loadingIndicator.hidden = false;
   dom.pausedControls.hidden = true;
+  dom.hud.classList.remove('visible');
   setPlaybackState('Loading');
   dom.title.textContent = message;
   setDuration(null);
@@ -254,7 +247,7 @@ function toggleQr(show) {
 }
 
 async function regenerateQr() {
-  if (!state.deviceId) return showMessage('Device ID not found');
+  if (!state.deviceId) return;
   const button = $('[data-action="regenerate-qr"]');
   const image = button?.querySelector('img');
   if (button) button.disabled = true;
@@ -267,10 +260,8 @@ async function regenerateQr() {
     if (!response.ok) throw new Error('QR request failed');
     const data = await response.json();
     if (image && data.qr_code_b64) image.src = `data:image/png;base64,${data.qr_code_b64}`;
-    showMessage('✓ QR code regenerated!', 3000);
   } catch (error) {
     console.error('QR regeneration failed:', error);
-    showMessage('Failed to regenerate QR code', 3000);
   } finally {
     if (button) button.disabled = false;
   }
@@ -357,7 +348,6 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
     else {
       failLoading('Unable to play video');
       schedule('nowPlaying', () => dom.nowPlaying.classList.remove('visible'), 3000);
-      showMessage('Could not play video', 3000);
     }
     return false;
   } finally {
@@ -380,7 +370,7 @@ function skipUnplayable() {
   state.errors += 1;
   if (state.errors <= 8) return loadNext();
   state.errors = 0;
-  showMessage('Too many unplayable videos. Check playlist.', 5000);
+  console.warn('Too many unplayable videos; trying another playlist');
   const fallback = playRandom();
   if (!fallback) failLoading('No playable videos');
   return fallback;
@@ -502,13 +492,10 @@ function updateShuffleButton() {
 function cycleShuffle() {
   if (!state.shuffleScope) {
     state.shuffleScope = SHUFFLE_ALL;
-    showMessage('Shuffle on');
   } else if (state.shuffleScope === SHUFFLE_ALL && state.category) {
     state.shuffleScope = state.category;
-    showMessage(`Shuffle locked to ${state.category}`);
   } else {
     state.shuffleScope = null;
-    showMessage('Shuffle off');
   }
   state.queuedChoice = null;
   updateShuffleButton();
@@ -655,17 +642,12 @@ function initPlaybackControls() {
       const duration = Number.isFinite(dom.video.duration) ? dom.video.duration : Infinity;
       dom.video.currentTime = Math.max(0, Math.min(duration, dom.video.currentTime + delta));
       updateProgress();
-      showMessage(`${delta > 0 ? '+' : ''}${delta}s`, 1000);
       return;
     }
 
     if (action === 'next') {
-      if (!state.shuffleScope && !state.playlistId) {
-        showMessage('No next video', 2000);
-        return;
-      }
-      const next = advanceVideo();
-      showMessage(next ? 'Next video' : 'No next video', next ? 1000 : 2000);
+      if (!state.shuffleScope && !state.playlistId) return;
+      advanceVideo();
     }
   });
 
@@ -695,11 +677,9 @@ function initRemotePoller() {
       if (data.type === 'playlist') {
         state.resumeAfterMenu = false;
         loadPlaylist(data.youtube_id, 'Submitted playlist', { showContext: false });
-        showMessage('✓ Playlist playing!', 3000);
       } else {
         state.resumeAfterMenu = false;
         playVideo(data.youtube_id);
-        showMessage('✓ Video playing!', 3000);
       }
       toggleQr(false);
       dom.menu.hidden = true;

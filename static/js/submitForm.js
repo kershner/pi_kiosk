@@ -2,17 +2,15 @@ const form = document.getElementById('f');
 const input = document.getElementById('search-input');
 const searchButton = document.getElementById('search-button');
 const results = document.getElementById('search-results-container');
-const message = document.getElementById('display-message');
+const status = document.getElementById('submit-status');
 const submitAction = document.getElementById('submit-action');
 const submitButton = form.querySelector('.submit-button');
 const youtubeUrlPattern = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i;
-let messageTimer;
 
-function showMessage(text, duration = 3000) {
-  clearTimeout(messageTimer);
-  message.textContent = text;
-  message.className = 'display-message show';
-  messageTimer = setTimeout(() => message.classList.remove('show'), duration);
+function showStatus(text = '', error = false) {
+  status.textContent = text;
+  status.hidden = !text;
+  status.classList.toggle('error', error);
 }
 
 function setSubmitReady(ready) {
@@ -39,6 +37,7 @@ async function search() {
   const query = input.value.trim();
   if (query.length < 3 || youtubeUrlPattern.test(query)) return;
 
+  showStatus();
   results.innerHTML = '<div class="search-loading">Searching YouTube...</div>';
   results.classList.remove('hidden');
   setSubmitReady(false);
@@ -59,6 +58,7 @@ results.addEventListener('click', event => {
   if (item) selectItem(item);
 });
 input.addEventListener('input', () => {
+  showStatus();
   setSubmitReady(youtubeUrlPattern.test(input.value.trim()));
 });
 
@@ -68,6 +68,7 @@ form.addEventListener('submit', async event => {
     await search();
     return;
   }
+  showStatus();
   submitButton.disabled = true;
   submitButton.textContent = 'Sending…';
   try {
@@ -85,12 +86,12 @@ form.addEventListener('submit', async event => {
       };
       throw new Error(errors[data.error] || data.message || 'Unable to send video.');
     }
-    showMessage('✓ Video sent successfully!');
+    showStatus('Sent to display.');
     form.reset();
     results.classList.add('hidden');
     setSubmitReady(false);
   } catch (error) {
-    showMessage(error.message || 'Network error. Please try again.');
+    showStatus(error.message || 'Network error. Please try again.', true);
   } finally {
     submitButton.disabled = false;
     submitButton.textContent = 'Send to display';
