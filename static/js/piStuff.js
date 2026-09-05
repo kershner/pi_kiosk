@@ -3,6 +3,11 @@ const $$ = selector => document.querySelectorAll(selector);
 const PLAYER_API = '/api/player';
 const CAPTIONS_KEY = 'pi-kiosk-captions-enabled';
 const SHUFFLE_ALL = '*';
+const PLAYER_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+const MEDIA_START_TIMEOUT_MS = 60 * 1000;
+const RECOVERY_DELAY_MS = 2 * 60 * 1000;
+const MAX_PLAYLIST_ERRORS = 3;
+const MAX_TOTAL_ERRORS = 6;
 
 const state = {
   deviceId: null,
@@ -161,6 +166,7 @@ function beginLoading(message = 'Preparing video…') {
 }
 
 function endLoading() {
+  clearTimer('mediaStart');
   state.loading = false;
   dom.loadingIndicator.hidden = true;
 }
@@ -300,6 +306,14 @@ function setVideoSource(data) {
     }
   });
 
+  // Chromium does not always emit a media error when a direct stream stalls
+  // during startup. Do not leave the kiosk in its loading state indefinitely.
+  schedule('mediaStart', () => {
+    if (!state.loading || state.started || state.videoId !== data.video_id) return;
+    console.warn('Media did not start within the playback deadline; skipping video');
+    skipUnplayable();
+  }, MEDIA_START_TIMEOUT_MS);
+
   if (data.video_id) {
     state.lastVideoId = data.video_id;
   }
@@ -307,10 +321,29 @@ function setVideoSource(data) {
 }
 
 async function playerRequest(endpoint, params, signal) {
-  const response = await fetch(`${PLAYER_API}/${endpoint}?${new URLSearchParams(params)}`, { signal });
-  const data = await response.json();
-  if (!response.ok || !data.url) throw new Error(data.error || 'No playable stream returned');
-  return data;
+  const controller = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () => controller.abort();
+  signal?.addEventListener('abort', forwardAbort, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, PLAYER_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `${PLAYER_API}/${endpoint}?${new URLSearchParams(params)}`,
+      { signal: controller.signal },
+    );
+    const data = await response.json();
+    if (!response.ok || !data.url) throw new Error(data.error || 'No playable stream returned');
+    return data;
+  } catch (error) {
+    if (timedOut) throw new Error('Video resolution timed out');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', forwardAbort);
+  }
 }
 
 function continueCurrentVideoWhileResolving() {
@@ -367,20 +400,34 @@ function loadNext(playlistId = state.playlistId) {
 }
 
 function skipUnplayable() {
+  clearTimer('mediaStart');
   state.errors += 1;
-  if (state.errors <= 8) return loadNext();
-  state.errors = 0;
-  console.warn('Too many unplayable videos; trying another playlist');
-  const fallback = playRandom();
-  if (!fallback) failLoading('No playable videos');
-  return fallback;
+  if (state.errors <= MAX_PLAYLIST_ERRORS) return loadNext();
+  if (state.errors <= MAX_TOTAL_ERRORS) {
+    console.warn('Playlist is unhealthy; trying another playlist');
+    const fallback = playRandom({ preserveErrors: true });
+    if (fallback) return fallback;
+  }
+
+  console.error('Playback recovery limit reached; backing off before retrying');
+  cancelRequest();
+  failLoading('No playable videos — retrying soon');
+  schedule('resolutionRetry', () => {
+    state.errors = 0;
+    if (!playRandom()) failLoading('No videos available');
+  }, RECOVERY_DELAY_MS);
+  return false;
 }
 
 function findChoice(playlistId) {
   return state.playlistIndex.get(playlistId) || null;
 }
 
-function loadPlaylist(playlistId, name = 'playlist', { showContext = true } = {}) {
+function loadPlaylist(
+  playlistId,
+  name = 'playlist',
+  { showContext = true, preserveErrors = false } = {},
+) {
   const choice = findChoice(playlistId);
   if (choice) {
     state.category = choice.category;
@@ -390,7 +437,7 @@ function loadPlaylist(playlistId, name = 'playlist', { showContext = true } = {}
   state.playlistId = playlistId;
   state.playlistName = name || 'playlist';
   state.showCatalogContext = showContext;
-  state.errors = 0;
+  if (!preserveErrors) state.errors = 0;
   state.lastVideoId = null;
   state.switchingPlaylist = true;
   setContext();
@@ -429,16 +476,16 @@ function chooseRandomPlaylist() {
   return choices.length ? choices[Math.floor(Math.random() * choices.length)] : null;
 }
 
-function playChoice(choice) {
+function playChoice(choice, options = {}) {
   if (!choice) return false;
   state.resumeAfterMenu = false;
   selectCategory(choice.category);
   dom.menu.hidden = true;
-  return loadPlaylist(choice.id, choice.name, { showContext: true });
+  return loadPlaylist(choice.id, choice.name, { showContext: true, ...options });
 }
 
-function playRandom() {
-  return playChoice(chooseRandomPlaylist());
+function playRandom(options = {}) {
+  return playChoice(chooseRandomPlaylist(), options);
 }
 
 function queueShufflePrefetch() {

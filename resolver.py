@@ -202,7 +202,12 @@ def resolve_stream_url(video_id):
     log.info("Resolving stream for %s", video_id)
     output = run_ytdlp(
         "-f",
-        "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
+        # The Pi 2 cannot efficiently software-decode VP9 or AV1. Prefer a
+        # progressive H.264 stream so Chromium receives one lightweight URL
+        # containing both audio and video. Keep fallbacks for unusual uploads.
+        "best[height<=480][ext=mp4][vcodec^=avc1]/"
+        "best[height<=480][vcodec^=avc1]/"
+        "best[height<=480][ext=mp4]/best[height<=480]/best",
         "-j",
         f"https://www.youtube.com/watch?v={video_id}",
         timeout=VIDEO_RESOLVE_TIMEOUT,
@@ -296,8 +301,16 @@ def wait_for_prefetch(playlist_id):
     if not future:
         return get_prefetched(playlist_id)
     log.info("Waiting for in-flight prefetch for playlist %s", playlist_id)
-    future.result()
-    return get_prefetched(playlist_id)
+    result = future.result()
+    cached = get_prefetched(playlist_id)
+    if cached:
+        return cached
+    # A completed matching prefetch already performed the full retry budget.
+    # Surface that failure instead of immediately repeating all of the same
+    # expensive yt-dlp work in the foreground request.
+    if result is None:
+        raise RuntimeError("Background stream resolution failed")
+    return result
 
 
 def get_prefetched(playlist_id):

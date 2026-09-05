@@ -114,6 +114,18 @@ class ResolverTests(unittest.TestCase):
             with resolver._cache_lock:
                 resolver._prefetch_futures.clear()
 
+    def test_failed_matching_prefetch_is_not_resolved_twice(self):
+        future = Mock()
+        future.result.return_value = None
+        with resolver._cache_lock:
+            resolver._prefetch_futures["playlist"] = future
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Background stream resolution failed"):
+                resolver.wait_for_prefetch("playlist")
+        finally:
+            with resolver._cache_lock:
+                resolver._prefetch_futures.clear()
+
 
 class PlayerApiTests(unittest.TestCase):
     def setUp(self):
