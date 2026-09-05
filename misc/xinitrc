@@ -57,17 +57,31 @@ if [ -r "$KIOSK_ENV_FILE" ]; then
   . "$KIOSK_ENV_FILE"
   set +a
 fi
-/home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
 
-# Wait until Flask is accepting connections before launching the browser
-echo "Waiting for Flask..." >> /home/pi/logs/xinitrc.log
-for i in $(seq 1 30); do
-  if curl -sf http://localhost:5020/ping > /dev/null 2>&1; then
-    echo "Flask ready at ${i}s" >> /home/pi/logs/xinitrc.log
-    break
-  fi
-  sleep 1
-done
+start_flask() {
+  /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/app.py >> /home/pi/logs/pi_server.log 2>&1 &
+  flask_pid=$!
+  echo "Started Flask as PID $flask_pid" >> /home/pi/logs/xinitrc.log
+}
+
+wait_for_flask() {
+  flask_wait=0
+  echo "Waiting for Flask..." >> /home/pi/logs/xinitrc.log
+  while ! curl -sf http://localhost:5020/ping > /dev/null 2>&1; do
+    if ! kill -0 "$flask_pid" 2>/dev/null; then
+      echo "Flask exited before becoming ready; restarting" >> /home/pi/logs/xinitrc.log
+      start_flask
+    fi
+    flask_wait=$((flask_wait + 2))
+    if [ $((flask_wait % 30)) -eq 0 ]; then
+      echo "Still waiting for Flask after ${flask_wait}s" >> /home/pi/logs/xinitrc.log
+    fi
+    sleep 2
+  done
+  echo "Flask ready after ${flask_wait}s" >> /home/pi/logs/xinitrc.log
+}
+
+start_flask
 
 # ─── Display setup ────────────────────────────────────────────────────────────
 
@@ -81,6 +95,11 @@ xinput set-prop "raspberrypi-ts" "Coordinate Transformation Matrix" 0.5 0 0 0 1 
 
 echo "Launching Chromium" >> /home/pi/logs/xinitrc.log
 while true; do
+  # Recheck the backend before every browser launch. If Chromium was restarted
+  # while Flask was recovering, navigating too early would strand it on a
+  # blank connection-error page until somebody killed the browser again.
+  wait_for_flask
+
   # /tmp is tmpfs on this Pi, so keep Chromium caches small enough for 742 MiB RAM.
   chromium \
     --kiosk \
