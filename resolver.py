@@ -202,12 +202,14 @@ def resolve_stream_url(video_id):
     log.info("Resolving stream for %s", video_id)
     output = run_ytdlp(
         "-f",
-        # The Pi 2 cannot efficiently software-decode VP9 or AV1. Prefer a
-        # progressive H.264 stream so Chromium receives one lightweight URL
-        # containing both audio and video. Keep fallbacks for unusual uploads.
-        "best[height<=480][ext=mp4][vcodec^=avc1]/"
-        "best[height<=480][vcodec^=avc1]/"
-        "best[height<=480][ext=mp4]/best[height<=480]/best",
+        # Quality is deliberately secondary on this software-rendered Pi 2.
+        # Pick the lowest muxed H.264 stream first so Chromium has less data to
+        # buffer and fewer pixels to decode, while retaining compatible
+        # fallbacks for uploads without a low-resolution rendition.
+        "worst[height<=360][ext=mp4][vcodec^=avc1][acodec!=none]/"
+        "best[height<=360][ext=mp4][vcodec^=avc1][acodec!=none]/"
+        "best[height<=360][vcodec^=avc1]/"
+        "best[height<=360][ext=mp4]/best[height<=360]/best",
         "-j",
         f"https://www.youtube.com/watch?v={video_id}",
         timeout=VIDEO_RESOLVE_TIMEOUT,
@@ -270,11 +272,11 @@ def _prefetch_next(playlist_id, exclude_id=None):
             _prefetch_futures.pop(playlist_id, None)
 
 
-def schedule_prefetch(playlist_id, exclude_id=None):
+def schedule_prefetch(playlist_id, exclude_id=None, force=False):
     """Start one deduplicated prefetch without overloading the Pi."""
     with _cache_lock:
         cached = _prefetch_cache.get(playlist_id)
-        if _is_fresh(cached, STREAM_URL_TTL):
+        if not force and _is_fresh(cached, STREAM_URL_TTL):
             return False
         _prefetch_cache.pop(playlist_id, None)
 

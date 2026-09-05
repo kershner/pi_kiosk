@@ -8,6 +8,9 @@ const MEDIA_START_TIMEOUT_MS = 60 * 1000;
 const RECOVERY_DELAY_MS = 2 * 60 * 1000;
 const MAX_PLAYLIST_ERRORS = 3;
 const MAX_TOTAL_ERRORS = 6;
+const INITIAL_PREFETCH_DELAY_MS = 30 * 1000;
+const SEEK_PREFETCH_DELAY_MS = 5 * 1000;
+const NEXT_PREFETCH_LEAD_SECONDS = 10 * 60;
 
 const state = {
   deviceId: null,
@@ -280,6 +283,8 @@ function cancelRequest() {
 
 function setVideoSource(data) {
   clearTimer('streamRefresh');
+  clearTimer('initialPrefetch');
+  clearTimer('nextPrefetch');
   state.title = data.title || '';
   state.videoId = data.video_id;
   state.started = false;
@@ -317,7 +322,6 @@ function setVideoSource(data) {
   if (data.video_id) {
     state.lastVideoId = data.video_id;
   }
-  if (state.shuffleScope) queueShufflePrefetch();
 }
 
 async function playerRequest(endpoint, params, signal) {
@@ -367,7 +371,10 @@ async function resolveAndPlay({ videoId = null, playlistId = null }) {
     ? { video_id: videoId }
     : { playlist_id: playlistId };
   if (!direct && state.lastVideoId) params.exclude = state.lastVideoId;
-  if (!direct && state.shuffleScope) params.prefetch = '0';
+  // Starting a background yt-dlp job while Chromium is filling its initial
+  // media buffer makes startup substantially slower on the Pi. The browser
+  // schedules prefetch only after playback is established instead.
+  if (!direct) params.prefetch = '0';
 
   try {
     const data = await playerRequest(direct ? 'resolve' : 'next', params, controller.signal);
@@ -488,15 +495,43 @@ function playRandom(options = {}) {
   return playChoice(chooseRandomPlaylist(), options);
 }
 
-function queueShufflePrefetch() {
-  if (!state.shuffleScope || state.queuedChoice) return;
-  const choice = chooseRandomPlaylist();
+function queueShufflePrefetch(force = false) {
+  if (!state.shuffleScope) return;
+  const choice = state.queuedChoice || chooseRandomPlaylist();
   if (!choice) return;
   state.queuedChoice = choice;
   const params = { playlist_id: choice.id };
   if (state.videoId) params.exclude = state.videoId;
+  if (force) params.refresh = '1';
   fetch(`${PLAYER_API}/prefetch?${new URLSearchParams(params)}`)
     .catch(error => console.warn('Shuffle prefetch failed:', error));
+}
+
+function queueNextPrefetch(force = false) {
+  if (state.shuffleScope) return queueShufflePrefetch(force);
+  if (!state.playlistId) return;
+  const params = { playlist_id: state.playlistId };
+  if (state.videoId) params.exclude = state.videoId;
+  if (force) params.refresh = '1';
+  fetch(`${PLAYER_API}/prefetch?${new URLSearchParams(params)}`)
+    .catch(error => console.warn('Playlist prefetch failed:', error));
+}
+
+function scheduleNextPrefetch() {
+  clearTimer('nextPrefetch');
+  if (!state.shuffleScope && !state.playlistId) return;
+  const duration = dom.video.duration;
+  if (!Number.isFinite(duration)) return;
+  const secondsUntilPrefetch = duration - dom.video.currentTime - NEXT_PREFETCH_LEAD_SECONDS;
+  // The normal post-start prefetch is enough for shorter videos. Long videos
+  // refresh the cached URL near their end because YouTube URLs expire.
+  if (secondsUntilPrefetch <= INITIAL_PREFETCH_DELAY_MS / 1000) {
+    if (state.started) {
+      schedule('nextPrefetch', () => queueNextPrefetch(true), SEEK_PREFETCH_DELAY_MS);
+    }
+    return;
+  }
+  schedule('nextPrefetch', () => queueNextPrefetch(true), secondsUntilPrefetch * 1000);
 }
 
 function playQueuedShuffle() {
@@ -596,6 +631,14 @@ function initMenu() {
       document.body.classList.remove('screen-off');
     }
   });
+
+  // Wake on the first touch signal instead of waiting for Chromium to
+  // synthesize a click after the complete tap gesture.
+  document.body.addEventListener('pointerdown', event => {
+    if (document.body.classList.contains('screen-off') && !event.target.closest('.menu-button')) {
+      document.body.classList.remove('screen-off');
+    }
+  }, { capture: true });
 }
 
 function scheduleStreamRefresh() {
@@ -644,6 +687,9 @@ function initVideoEvents() {
     if (firstPlayback) {
       showNowPlaying('Playing');
       hideNowPlayingAfter(5000);
+      // Let Chromium establish its media buffer before yt-dlp and Node perform
+      // background work for the following video.
+      schedule('initialPrefetch', queueNextPrefetch, INITIAL_PREFETCH_DELAY_MS);
     } else if (resumed) hideNowPlayingImmediately();
   });
   dom.video.addEventListener('pause', () => {
@@ -656,7 +702,9 @@ function initVideoEvents() {
     setDuration(dom.video.duration);
     updateProgress();
     scheduleStreamRefresh();
+    scheduleNextPrefetch();
   });
+  dom.video.addEventListener('seeked', scheduleNextPrefetch);
 }
 
 function initPlaybackControls() {
@@ -667,7 +715,7 @@ function initPlaybackControls() {
     overlay.id = `player-overlay-${side}`;
     $('#player-container').appendChild(overlay);
 
-    overlay.addEventListener('pointerup', event => {
+    overlay.addEventListener('pointerdown', event => {
       if (event.pointerType === 'touch') event.preventDefault();
       if (document.body.classList.contains('screen-off') || state.loading || dom.video.paused) return;
       dom.video.pause();

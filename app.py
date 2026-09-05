@@ -251,7 +251,11 @@ def player_prefetch():
     playlist_id = request.args.get('playlist_id')
     if not playlist_id:
         return jsonify({'error': 'missing playlist_id'}), 400
-    scheduled = resolver.schedule_prefetch(playlist_id, request.args.get('exclude'))
+    scheduled = resolver.schedule_prefetch(
+        playlist_id,
+        request.args.get('exclude'),
+        force=request.args.get('refresh') == '1',
+    )
     return jsonify({'ok': True, 'scheduled': scheduled})
 
 

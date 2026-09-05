@@ -114,6 +114,27 @@ class ResolverTests(unittest.TestCase):
             with resolver._cache_lock:
                 resolver._prefetch_futures.clear()
 
+    def test_forced_prefetch_replaces_a_fresh_cached_stream(self):
+        class PendingFuture:
+            def done(self):
+                return False
+
+        with resolver._cache_lock:
+            resolver._prefetch_cache["playlist"] = {
+                "url": "expiring",
+                "ts": resolver.time.time(),
+            }
+            resolver._prefetch_futures.clear()
+        try:
+            with patch.object(resolver._prefetch_executor, "submit", return_value=PendingFuture()):
+                self.assertTrue(resolver.schedule_prefetch("playlist", force=True))
+            with resolver._cache_lock:
+                self.assertNotIn("playlist", resolver._prefetch_cache)
+        finally:
+            with resolver._cache_lock:
+                resolver._prefetch_cache.clear()
+                resolver._prefetch_futures.clear()
+
     def test_failed_matching_prefetch_is_not_resolved_twice(self):
         future = Mock()
         future.result.return_value = None
@@ -186,6 +207,16 @@ class PlayerApiTests(unittest.TestCase):
         wait.assert_not_called()
         resolve.assert_not_called()
         schedule.assert_called_once_with("PL123", "abc")
+
+    def test_prefetch_route_can_force_refresh_an_expiring_stream(self):
+        with patch.object(resolver, "schedule_prefetch", return_value=True) as schedule:
+            response = self.client.get(
+                "/api/player/prefetch?playlist_id=PL123&exclude=abc&refresh=1"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["scheduled"])
+        schedule.assert_called_once_with("PL123", "abc", force=True)
 
 
 class CatalogTests(unittest.TestCase):
