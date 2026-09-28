@@ -1,5 +1,5 @@
+from config import FLASK_PORT, YOUTUBE_BASE_API_URL, YOUTUBE_API_KEY, SEARCH_CACHE_TTL, VIDEO_PLAY_URL, VIDEO_PLAY_API_KEY
 from flask import Flask, request, jsonify, render_template, Response, make_response
-from config import FLASK_PORT, YOUTUBE_BASE_API_URL, YOUTUBE_API_KEY, SEARCH_CACHE_TTL
 from remote import (
     get_or_create_qr_code, invalidate_qr_cache,
     extract_youtube_id,
@@ -300,6 +300,24 @@ def proxy_subtitle():
     except Exception as e:
         app.logger.warning('Subtitle proxy failed: %s', e)
         return '', 502
+
+
+@app.route('/api/video-play', methods=['POST'])
+def video_play():
+    if not VIDEO_PLAY_API_KEY:
+        return Response(status=204)
+
+    try:
+        response = http.post(
+            VIDEO_PLAY_URL,
+            json=request.get_json(),
+            headers={'Authorization': f'Bearer {VIDEO_PLAY_API_KEY}'},
+            timeout=5,
+        )
+        return Response(status=response.status_code)
+    except http.RequestException as e:
+        app.logger.warning('Could not record video play: %s', e)
+        return Response(status=204)
 
 
 @app.route('/ping')

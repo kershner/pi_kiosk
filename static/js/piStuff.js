@@ -35,6 +35,7 @@ const state = {
   latestTs: 0,
   request: null,
   captions: localStorage.getItem(CAPTIONS_KEY) !== 'false',
+  play: null,
 };
 
 const timers = {};
@@ -281,7 +282,17 @@ function cancelRequest() {
   state.request = null;
 }
 
+function finishCurrentPlay(completed = false) {
+  if (!state.play || state.play.ended_at) return;
+
+  state.play.ended_at = new Date().toISOString();
+  state.play.watched_seconds = Math.round(dom.video.currentTime || 0);
+  state.play.completed = completed;
+}
+
 function setVideoSource(data) {
+  finishCurrentPlay(dom.video.ended);
+
   clearTimer('streamRefresh');
   clearTimer('initialPrefetch');
   clearTimer('nextPrefetch');
@@ -322,6 +333,32 @@ function setVideoSource(data) {
   if (data.video_id) {
     state.lastVideoId = data.video_id;
   }
+}
+
+function recordPlay() {
+  const previous = state.play;
+  const now = new Date().toISOString();
+
+  state.play = {
+    event_id: crypto.randomUUID(),
+    youtube_id: state.videoId,
+    title: state.title,
+    device_id: state.deviceId,
+    playlist_id: state.playlistId,
+    playlist_name: state.playlistName,
+    category: state.category,
+    started_at: now,
+    duration: Math.round(dom.video.duration || 0),
+  };
+
+  fetch('/api/video-play', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      previous,
+      current: state.play,
+    }),
+  }).catch(() => {});
 }
 
 async function playerRequest(endpoint, params, signal) {
@@ -668,6 +705,7 @@ function advanceVideo() {
 
 function initVideoEvents() {
   dom.video.addEventListener('ended', () => {
+    finishCurrentPlay(true);
     if (!state.switchingPlaylist && !state.loading) advanceVideo();
   });
   dom.video.addEventListener('error', () => {
@@ -685,6 +723,7 @@ function initVideoEvents() {
     endLoading();
     setPausedUi(false);
     if (firstPlayback) {
+      recordPlay();
       showNowPlaying('Playing');
       hideNowPlayingAfter(5000);
       // Let Chromium establish its media buffer before yt-dlp and Node perform

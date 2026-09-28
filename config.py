@@ -10,3 +10,9 @@ YOUTUBE_BASE_API_URL = 'https://www.googleapis.com/youtube/v3'
 CATEGORIES_URL = 'https://kershner.org/pi/categories.json'
 
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', '')
+
+VIDEO_PLAY_URL = os.environ.get(
+    'VIDEO_PLAY_URL',
+    'http://localhost:8000/pi/api/video-play/',
+)
+VIDEO_PLAY_API_KEY = os.environ.get('VIDEO_PLAY_API_KEY', '')
