@@ -13,6 +13,8 @@ import requests as http
 import logging
 import json
 import time
+import secrets
+import threading
 import resolver
 
 app = Flask(__name__)
@@ -23,6 +25,10 @@ logging.basicConfig(level=logging.INFO, format='[pi_server] %(message)s')
 # repetitive lines to the SD card every day.
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 _search_cache = {}
+_browser_watchdog_lock = threading.Lock()
+_browser_watchdog_token = None
+_browser_watchdog_seen = 0.0
+BROWSER_HEARTBEAT_TIMEOUT = 180
 
 MWEB_USER_AGENT = (
     'Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) '
@@ -323,6 +329,38 @@ def video_play():
 @app.route('/ping')
 def ping():
     return jsonify({'ok': True})
+
+
+@app.route('/api/kiosk/watchdog', methods=['POST', 'GET'])
+def browser_watchdog():
+    # Only the local supervisor may arm/check the watchdog. Remote control
+    # pages must never keep a failed kiosk browser looking healthy.
+    if request.remote_addr not in ('127.0.0.1', '::1'):
+        return Response(status=403)
+    global _browser_watchdog_token, _browser_watchdog_seen
+    with _browser_watchdog_lock:
+        if request.method == 'POST':
+            _browser_watchdog_token = secrets.token_hex(16)
+            _browser_watchdog_seen = time.monotonic()
+            return jsonify({'token': _browser_watchdog_token})
+        healthy = (
+            _browser_watchdog_token is not None
+            and request.args.get('token') == _browser_watchdog_token
+            and time.monotonic() - _browser_watchdog_seen < BROWSER_HEARTBEAT_TIMEOUT
+        )
+    return Response(status=204 if healthy else 503, headers={'Cache-Control': 'no-store'})
+
+
+@app.route('/api/kiosk/heartbeat', methods=['POST'])
+def browser_heartbeat():
+    if request.remote_addr not in ('127.0.0.1', '::1'):
+        return Response(status=403)
+    global _browser_watchdog_seen
+    with _browser_watchdog_lock:
+        if not _browser_watchdog_token or request.args.get('token') != _browser_watchdog_token:
+            return Response(status=403)
+        _browser_watchdog_seen = time.monotonic()
+    return Response(status=204)
 
 
 # ─── Entry point ───────────────────────────────────────────────────────────────

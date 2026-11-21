@@ -851,7 +851,29 @@ function init() {
   initPlaybackControls();
   initVideoEvents();
   initRemotePoller();
+  initBrowserHeartbeat();
   applyQuery();
+}
+
+function initBrowserHeartbeat() {
+  const token = new URLSearchParams(location.search).get('watchdog');
+  if (!token) return;
+  const beat = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      await fetch(`/api/kiosk/heartbeat?token=${encodeURIComponent(token)}`, {
+        method: 'POST', signal: controller.signal,
+      });
+    } catch (_) {
+      // The external supervisor handles missing heartbeats, even if this
+      // renderer freezes or the page never finishes loading.
+    } finally {
+      clearTimeout(timeout);
+      schedule('browserHeartbeat', beat, 15000);
+    }
+  };
+  beat();
 }
 
 document.addEventListener('DOMContentLoaded', init);

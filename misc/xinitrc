@@ -67,7 +67,7 @@ start_flask() {
 wait_for_flask() {
   flask_wait=0
   echo "Waiting for Flask..." >> /home/pi/logs/xinitrc.log
-  while ! curl -sf http://localhost:5020/ping > /dev/null 2>&1; do
+  while ! curl --max-time 5 -sf http://127.0.0.1:5020/ping > /dev/null 2>&1; do
     if ! kill -0 "$flask_pid" 2>/dev/null; then
       echo "Flask exited before becoming ready; restarting" >> /home/pi/logs/xinitrc.log
       start_flask
@@ -101,7 +101,7 @@ while true; do
   wait_for_flask
 
   # /tmp is tmpfs on this Pi, so keep Chromium caches small enough for 742 MiB RAM.
-  chromium \
+  /home/pi/pi_kiosk/venv/bin/python3 /home/pi/pi_kiosk/misc/browser_watchdog.py chromium \
     --kiosk \
     --noerrdialogs \
     --disable-session-crashed-bubble \
@@ -126,7 +126,7 @@ while true; do
     --media-cache-size=33554432 \
     --user-data-dir=/home/pi/.config/chromium-kiosk \
     --allow-running-insecure-content \
-    http://localhost:5020?shuffle=true \
+    'http://localhost:5020?shuffle=true' \
     >> /home/pi/logs/chromium.log 2>&1
 
   echo "Chromium exited at $(date)" >> /home/pi/logs/xinitrc.log
